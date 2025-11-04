@@ -3,18 +3,9 @@
  * 解决 Vite 动态 import 路径解析问题
  */
 
-// 组件映射表（显式导入，确保路径正确）
-const componentMap = {
-  'system/user/index': () => import('@/views/system/user/index.vue'),
-  'system/role/index': () => import('@/views/system/role/index.vue'),
-  'system/menu/index': () => import('@/views/system/menu/index.vue'),
-  'system/permission/index': () => import('@/views/system/permission/index.vue'),
-  'system/organization/index': () => import('@/views/system/organization/index.vue'),
-  'system/codegen/index': () => import('@/views/system/codegen/index.vue'),
-  'system/book/index': () => import('@/views/system/book/index.vue'),
-  'curdexample/index': () => import('@/views/curdexample/index.vue'),
-  // 自动添加其他路径
-}
+// 使用 Vite 的 import.meta.glob 自动收集所有视图组件
+// 相对路径基于当前文件（src/utils），因此使用 ../views
+const viewModules = import.meta.glob('../views/**/*.vue')
 
 /**
  * 动态加载组件
@@ -22,20 +13,18 @@ const componentMap = {
  * @returns {Promise} 组件导入 Promise
  */
 export function loadComponent(componentPath) {
-  // 先从映射表查找
-  if (componentMap[componentPath]) {
-    return componentMap[componentPath]()
-  }
+  // 规范化：后端给的通常是例如 'system/book/index'
+  // 我们按 '../views/${componentPath}.vue' 进行匹配
+  const guess = `../views/${componentPath}.vue`
+  const loader = viewModules[guess]
+  if (loader) return loader()
 
-  // 如果映射表中没有，尝试动态导入
-  const fullPath = componentPath.startsWith('@/')
-    ? componentPath
-    : `@/views/${componentPath}`
+  // 兼容：若后端未带 index，尝试补全
+  const guessIndex = `../views/${componentPath}/index.vue`
+  const loaderIndex = viewModules[guessIndex]
+  if (loaderIndex) return loaderIndex()
 
-  return import(/* @vite-ignore */ fullPath).catch((err) => {
-    console.error('加载组件失败:', fullPath, err)
-    // 返回默认菜单页面
-    return import('@/views/menu-page/index.vue')
-  })
+  console.error('加载组件失败: 未找到匹配视图', componentPath)
+  return import('@/views/menu-page/index.vue')
 }
 
