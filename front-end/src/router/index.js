@@ -15,12 +15,6 @@ export const constantRoutes = [
     component: () => import('@/views/login'),
     hidden: true
   },
-  {
-    path: '/ceshi',
-    component: () => import('@/views/table'),
-    hidden: false
-  },
-
   // 根路径暂时重定向到 /system（路由加载后会覆盖）
   {
     path: '/',
