@@ -25,16 +25,15 @@
         </a-space>
       </div>
 
-      <!-- 表格 -->
+      <!-- 树形表格 -->
       <a-table
         :columns="columns"
         :data="tableData"
         :loading="loading"
-        :pagination="pagination"
-        @page-change="handlePageChange"
-        @page-size-change="handlePageSizeChange"
+        :pagination="false"
         :bordered="false"
         :hoverable="true"
+        :row-selection="rowSelection"
         style="margin-top: 16px"
       >
         <template #parent="{ record }">
@@ -140,13 +139,10 @@ const columns = [
 const searchText = ref('')
 const loading = ref(false)
 const tableData = ref([])
-const pagination = reactive({
-  current: 1,
-  pageSize: 20,
-  total: 0,
-  showTotal: true,
-  showPageSize: true
-})
+const rowSelection = {
+  type: 'checkbox',
+  showCheckedAll: true
+}
 
 const formVisible = ref(false)
 const formTitle = ref('新增菜单')
@@ -170,20 +166,37 @@ const formRules = {
 const menuList = ref([])
 const menuLoading = ref(false)
 
+// 将树形数据扁平化（用于父菜单选择）
+const flattenMenuTree = (tree, result = []) => {
+  tree.forEach(item => {
+    result.push({
+      id: item.id,
+      title: item.title,
+      path: item.path,
+      component: item.component,
+      icon: item.icon,
+      order: item.order,
+      parent: item.parent,
+      is_hidden: item.is_hidden
+    })
+    if (item.children && item.children.length > 0) {
+      flattenMenuTree(item.children, result)
+    }
+  })
+  return result
+}
+
 // 获取列表数据
 const fetchData = async () => {
   loading.value = true
   try {
-    const params = {
-      page: pagination.current,
-      page_size: pagination.pageSize
-    }
+    const params = {}
     if (searchText.value) {
       params.search = searchText.value
     }
     const res = await getMenuList(params)
-    tableData.value = res.results || res.data || []
-    pagination.total = res.count || res.total || 0
+    // 后端现在返回的是树形结构数组
+    tableData.value = Array.isArray(res) ? res : (res.results || res.data || [])
   } catch (e) {
     Message.error('获取列表失败')
   } finally {
@@ -196,7 +209,9 @@ const loadMenuList = async () => {
   menuLoading.value = true
   try {
     const res = await getMenuList()
-    menuList.value = res.results || res.data || []
+    const treeData = Array.isArray(res) ? res : (res.results || res.data || [])
+    // 扁平化树形数据用于下拉选择
+    menuList.value = flattenMenuTree(treeData)
   } catch (e) {
     console.error('加载菜单列表失败:', e)
   } finally {
@@ -206,19 +221,6 @@ const loadMenuList = async () => {
 
 // 搜索
 const handleSearch = () => {
-  pagination.current = 1
-  fetchData()
-}
-
-// 分页
-const handlePageChange = (page) => {
-  pagination.current = page
-  fetchData()
-}
-
-const handlePageSizeChange = (pageSize) => {
-  pagination.pageSize = pageSize
-  pagination.current = 1
   fetchData()
 }
 

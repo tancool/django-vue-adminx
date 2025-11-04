@@ -33,7 +33,7 @@ class DefaultPermission(permissions.IsAuthenticated):
 
 
 class MenuViewSet(viewsets.ModelViewSet):
-    """菜单 CRUD 与列表检索。"""
+    """菜单 CRUD 与列表检索。列表接口返回树形结构。"""
     queryset = Menu.objects.all().order_by('order', 'id')
     serializer_class = MenuSerializer
     permission_classes = [DefaultPermission]
@@ -41,6 +41,49 @@ class MenuViewSet(viewsets.ModelViewSet):
     filterset_fields = ['parent', 'is_hidden']
     search_fields = ['title', 'path', 'component']
     ordering_fields = ['order', 'id', 'title']
+
+    def list(self, request, *args, **kwargs):
+        """返回树形结构的菜单列表。"""
+        # 获取所有菜单（应用过滤、搜索等）
+        queryset = self.filter_queryset(self.get_queryset())
+        menus = list(queryset.prefetch_related('children'))
+
+        def to_node(m: Menu) -> Dict:
+            """将菜单模型转换为树节点。"""
+            return {
+                "id": m.id,
+                "title": m.title,
+                "path": m.path,
+                "component": m.component,
+                "icon": m.icon,
+                "order": m.order,
+                "parent": m.parent_id,
+                "is_hidden": m.is_hidden,
+                "children": [],
+            }
+
+        # 构建节点映射
+        node_map: Dict[int, Dict] = {m.id: to_node(m) for m in menus}
+        roots: List[Dict] = []
+
+        # 构建树形结构
+        for m in menus:
+            node = node_map[m.id]
+            if m.parent_id and m.parent_id in node_map:
+                node_map[m.parent_id]["children"].append(node)
+            else:
+                roots.append(node)
+
+        def sort_tree(nodes: List[Dict]):
+            """递归排序树节点。"""
+            nodes.sort(key=lambda n: (n.get('order', 0), n.get('id', 0)))
+            for n in nodes:
+                sort_tree(n.get('children', []))
+
+        sort_tree(roots)
+
+        # 返回树形结构（不使用分页）
+        return Response(roots)
 
 
 class PermissionViewSet(viewsets.ModelViewSet):

@@ -26,9 +26,9 @@ router.beforeEach(async (to, from, next) => {
         return
       }
     } catch (e) {
-      Message.info('请先登录')
-      next('/login')
-      return
+    Message.info('请先登录')
+    next('/login')
+    return
     }
   }
 
