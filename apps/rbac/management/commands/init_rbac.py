@@ -66,6 +66,7 @@ class Command(BaseCommand):
         menu_permission = self._get_or_create_menu('权限管理', 'permission', 'system/permission/index', 'icon-zoom-in', menu_system, 4)
         menu_org = self._get_or_create_menu('组织管理', 'organization', 'system/organization/index', 'icon-moon-fill', menu_system, 5)
         menu_monitor = self._get_or_create_menu('系统监控', 'monitor', 'system/monitor/index', 'icon-dashboard', menu_system, 6)
+        menu_tasks = self._get_or_create_menu('任务管理', 'task', 'system/task/index', 'icon-schedule', menu_system, 7)
         self.stdout.write(self.style.SUCCESS(f'  ✓ 创建菜单: {menu_system.title} 及其子菜单'))
 
         # 3. 创建权限
@@ -104,6 +105,12 @@ class Command(BaseCommand):
         
         # 系统监控权限
         perms.append(self._get_or_create_permission('系统监控查看', 'system:metrics', 'GET', '/api/rbac/system/metrics/', menu_monitor))
+        # 任务管理权限
+        perms.append(self._get_or_create_permission('任务列表', 'tasks:list', 'GET', '/api/tasks/tasks/', menu_tasks))
+        perms.append(self._get_or_create_permission('任务创建', 'tasks:create', 'POST', '/api/tasks/tasks/', menu_tasks))
+        perms.append(self._get_or_create_permission('任务更新', 'tasks:update', 'PUT', '/api/tasks/tasks/\d+/', menu_tasks))
+        perms.append(self._get_or_create_permission('任务删除', 'tasks:delete', 'DELETE', '/api/tasks/tasks/\d+/', menu_tasks))
+        perms.append(self._get_or_create_permission('任务立即执行', 'tasks:run_now', 'POST', '/api/tasks/tasks/\d+/run_now/', menu_tasks))
 
         self.stdout.write(self.style.SUCCESS(f'  ✓ 创建权限: {len(perms)} 个'))
 
@@ -111,7 +118,7 @@ class Command(BaseCommand):
         self.stdout.write('创建角色...')
         role_admin = self._get_or_create_role('超级管理员', 'ADMIN', '拥有所有权限', 'ALL')
         role_admin.permissions.set(perms)
-        role_admin.menus.set([menu_system, menu_user, menu_role, menu_menu, menu_permission, menu_org, menu_monitor])
+        role_admin.menus.set([menu_system, menu_user, menu_role, menu_menu, menu_permission, menu_org, menu_monitor, menu_tasks])
         role_admin.custom_data_organizations.set([org_root, org_admin])
         
         role_user = self._get_or_create_role('普通用户', 'USER', '普通用户角色', 'SELF')

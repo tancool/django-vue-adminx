@@ -32,6 +32,7 @@ urlpatterns = [
     path('api/curd/', include('apps.curdexample.urls')),
     path('api/common/', include('apps.common.urls')),
     path('api/codegen/', include('apps.codegen.urls')),
+    path('api/tasks/', include('apps.tasks.urls')),
     path('api/book/', include('apps.book.urls')),
 ]
 

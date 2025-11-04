@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django_filters',
     'corsheaders',
     'apps.codegen',
+    'apps.tasks.apps.TasksConfig',
     'apps.rbac.apps.RbacConfig',
     'apps.curdexample.apps.CurdexampleConfig',
 
