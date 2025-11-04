@@ -56,7 +56,17 @@ class AuditOwnerPopulateMixin(viewsets.GenericViewSet):
 
 
 class SoftDeleteMixin(viewsets.GenericViewSet):
-    """可选软删除：若模型包含 is_deleted 字段，则 destroy 改为软删除。"""
+    """可选软删除：若模型包含 is_deleted 字段，则 destroy 改为软删除，并在查询时自动排除已删除数据。"""
+
+    def get_queryset(self):  # noqa: D401
+        queryset = super().get_queryset()
+        try:
+            model = queryset.model  # type: ignore[attr-defined]
+        except Exception:
+            return queryset
+        if _model_has_field(model, 'is_deleted'):
+            return queryset.filter(is_deleted=False)
+        return queryset
 
     def perform_destroy(self, instance):  # noqa: D401
         if _model_has_field(instance.__class__, 'is_deleted'):
