@@ -4,8 +4,11 @@
 默认使用主键写入多对多字段，便于前端直接传递 ID 列表。
 """
 
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Menu, Permission, Role, UserRole, Organization, UserOrganization
+
+User = get_user_model()
 
 
 class MenuSerializer(serializers.ModelSerializer):
@@ -52,5 +55,47 @@ class UserOrganizationSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserOrganization
         fields = '__all__'
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """用户序列化器：用于用户管理。"""
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login']
+        read_only_fields = ['date_joined', 'last_login']
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    """用户创建序列化器：包含密码字段。"""
+    password = serializers.CharField(write_only=True, required=True, min_length=6)
+    
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser']
+    
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = User.objects.create_user(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """用户更新序列化器：密码可选。"""
+    password = serializers.CharField(write_only=True, required=False, min_length=6, allow_blank=True)
+    
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser']
+    
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 

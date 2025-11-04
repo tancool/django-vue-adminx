@@ -128,7 +128,24 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# CORS 配置：允许跨域请求
 CORS_ORIGIN_ALLOW_ALL = True  # 如果设置为True，则允许所有源进行跨域访问
+CORS_ALLOW_CREDENTIALS = True  # 允许携带 Cookie（Session 认证需要）
+
+# CSRF 配置：允许来自前端的 CSRF 请求
+# 注意：CSRF_TRUSTED_ORIGINS 需要包含协议和端口号
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+]
+
+# CSRF Cookie 设置（跨域时需要）
+CSRF_COOKIE_SAMESITE = 'Lax'  # 开发环境使用 Lax（生产环境跨域时使用 None）
+CSRF_COOKIE_SECURE = False  # 开发环境使用 False（生产环境应使用 True）
+CSRF_COOKIE_HTTPONLY = False  # 允许 JavaScript 读取 Cookie
+CSRF_USE_SESSIONS = False  # 使用 Cookie 而不是 Session
 CORS_ALLOW_METHODS = (
      'DELETE',
      'GET',

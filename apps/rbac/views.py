@@ -6,12 +6,14 @@
 
 from typing import Dict, List
 
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, get_user_model
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Menu, Permission, Role, UserRole, Organization, UserOrganization
+
+User = get_user_model()
 from .serializers import (
     MenuSerializer,
     PermissionSerializer,
@@ -19,6 +21,9 @@ from .serializers import (
     UserRoleSerializer,
     OrganizationSerializer,
     UserOrganizationSerializer,
+    UserSerializer,
+    UserCreateSerializer,
+    UserUpdateSerializer,
 )
 
 
@@ -91,6 +96,23 @@ class UserOrganizationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['user', 'organization', 'is_primary']
     search_fields = ['user__username', 'organization__name']
     ordering_fields = ['created_at', 'id']
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    """用户 CRUD 与列表检索。"""
+    queryset = User.objects.all().order_by('-id')
+    permission_classes = [DefaultPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'is_staff', 'is_superuser']
+    search_fields = ['username', 'email', 'first_name', 'last_name']
+    ordering_fields = ['id', 'username', 'date_joined']
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return UserCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return UserUpdateSerializer
+        return UserSerializer
 
 
 class LoginView(APIView):

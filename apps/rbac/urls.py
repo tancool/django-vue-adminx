@@ -26,6 +26,7 @@ from .views import (
     MenuViewSet,
     PermissionViewSet,
     RoleViewSet,
+    UserViewSet,
     UserRoleViewSet,
     OrganizationViewSet,
     UserOrganizationViewSet,
@@ -45,6 +46,7 @@ router = DefaultRouter()
 router.register(r'menus', MenuViewSet)
 router.register(r'permissions', PermissionViewSet)
 router.register(r'roles', RoleViewSet)
+router.register(r'users', UserViewSet)
 router.register(r'user-roles', UserRoleViewSet)
 router.register(r'organizations', OrganizationViewSet)
 router.register(r'user-organizations', UserOrganizationViewSet)
