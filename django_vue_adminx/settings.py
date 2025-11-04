@@ -44,8 +44,6 @@ INSTALLED_APPS = [
     'apps.tasks.apps.TasksConfig',
     'apps.rbac.apps.RbacConfig',
     'apps.curdexample.apps.CurdexampleConfig',
-
-    'apps.book'
 ]
 
 MIDDLEWARE = [

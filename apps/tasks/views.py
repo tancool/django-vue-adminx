@@ -5,9 +5,9 @@ from rest_framework.response import Response
 from apps.common.mixins import SoftDeleteMixin, AuditOwnerPopulateMixin
 from apps.common.data_mixins import DataScopeFilterMixin
 
-from .models import Job
-from .serializers import JobSerializer
-from .scheduler import add_or_update_job, remove_job, run_job_now
+from apps.tasks.models import Job
+from apps.tasks.serializers import JobSerializer
+from apps.tasks.scheduler import add_or_update_job, remove_job, run_job_now
 
 
 class JobViewSet(DataScopeFilterMixin, AuditOwnerPopulateMixin, SoftDeleteMixin, viewsets.ModelViewSet):

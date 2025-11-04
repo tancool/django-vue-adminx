@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Job
+from apps.tasks.models import Job
 
 
 class JobSerializer(serializers.ModelSerializer):

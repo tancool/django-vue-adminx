@@ -5,7 +5,7 @@ from apscheduler.triggers.date import DateTrigger
 from django.utils.module_loading import import_string
 from django.utils import timezone
 
-from .models import Job
+from apps.tasks.models import Job
 
 _scheduler: BackgroundScheduler | None = None
 

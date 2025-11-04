@@ -11,7 +11,7 @@ class TasksConfig(AppConfig):
 		# Avoid running twice under autoreload
 		if os.environ.get('RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('DJANGO_MAIN_PROCESS') == 'true':
 			try:
-				from .scheduler import start_scheduler, sync_all_jobs_from_db
+				from apps.tasks.scheduler import start_scheduler, sync_all_jobs_from_db
 				start_scheduler()
 				sync_all_jobs_from_db()
 			except Exception:
