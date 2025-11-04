@@ -133,7 +133,7 @@ class GenerateFromSpecView(APIView):
                     ('models.py', 'from django.db import models\n'),
                     ('admin.py', ''),
                     ('views.py', ''),
-                    ('urls.py', 'from django.urls import path\n\nurlpatterns = []\n'),
+                    ('urls.py', 'from django.urls import path, include\nfrom rest_framework.routers import DefaultRouter\n\nrouter = DefaultRouter()\n\nurlpatterns = [\n    path(\'\', include(router.urls)),\n]\n'),
                     ('migrations/__init__.py', ''),
                 ]:
                     target = app_dir / fname
@@ -218,25 +218,33 @@ class GenerateFromSpecView(APIView):
             urls_py = app_dir / 'urls.py'
             if urls_py.exists():
                 text = urls_py.read_text(encoding='utf-8')
-                # imports
-                if 'from django.urls import path, include' not in text:
-                    if 'from django.urls import' in text:
-                        text = text.replace('from django.urls import', 'from django.urls import')  # no-op placeholder
-                    else:
+                import re
+                # ensure include in django.urls import
+                m = re.search(r"^from django\.urls import ([^\n]+)$", text, re.M)
+                if m:
+                    parts = [p.strip() for p in m.group(1).split(',') if p.strip()]
+                    if 'include' not in parts:
+                        parts.append('include')
+                    new_import = 'from django.urls import ' + ', '.join(sorted(set(parts)))
+                    text = text[:m.start()] + new_import + text[m.end():]
+                else:
+                    if 'from django.urls import path, include' not in text:
                         text = 'from django.urls import path, include\n' + text
+                # ensure DefaultRouter import
                 if 'DefaultRouter' not in text:
                     text = 'from rest_framework.routers import DefaultRouter\n' + text
-                # router
+                # ensure router
                 if 'router = DefaultRouter()' not in text:
                     text += '\n\nrouter = DefaultRouter()\n'
-                # register
+                # ensure register
                 register_line = f"router.register(r'{str(model_name).lower()}', {model_name}ViewSet, basename='{str(model_name).lower()}')\n"
                 if register_line not in text:
                     import_line = f'from .views import {model_name}ViewSet\n'
                     if import_line not in text:
                         text = import_line + text
                     text += register_line
-                # urlpatterns
+                # normalize urlpatterns: remove stray empty list
+                text = re.sub(r"^urlpatterns\s*=\s*\[\s*\]\s*$", '', text, flags=re.M)
                 if 'urlpatterns' in text and 'include(router.urls)' in text:
                     pass
                 elif 'urlpatterns = router.urls' in text:
