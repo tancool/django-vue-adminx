@@ -15,15 +15,19 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 环境变量（用于 Docker）
+DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure--mpclg7e91pkc&c+dz3lcf%=ddfye@9asvaf4z7xnjd9tpt#bb')
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--mpclg7e91pkc&c+dz3lcf%=ddfye@9asvaf4z7xnjd9tpt#bb'
+# SECRET_KEY 已在文件顶部定义
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# DEBUG 已在文件顶部定义
 
 ALLOWED_HOSTS = ["*"]
 
@@ -83,12 +87,27 @@ WSGI_APPLICATION = 'django_vue_adminx.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# 支持从环境变量读取数据库配置（用于 Docker）
+if os.getenv('DATABASE_URL'):
+    # 使用 PostgreSQL（Docker 环境）
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'django_vue_adminx'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', 'postgres123'),
+            'HOST': os.getenv('DB_HOST', 'db'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
     }
-}
+else:
+    # 使用 SQLite（开发环境）
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -125,7 +144,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
