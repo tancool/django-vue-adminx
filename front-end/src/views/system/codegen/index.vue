@@ -5,6 +5,17 @@
         <a-typography-title :heading="4">代码生成器（可视化定义字段 → 一键生成）</a-typography-title>
       </template>
 
+      <a-alert type="warning" closable style="margin-bottom: 12px;">
+        <template #title>生成后请在后端执行数据库迁移</template>
+        <div>
+          为使新增模型同步到数据库，请在 <code>backend</code> 目录执行：
+          <pre style="background:#f6f8fa;padding:8px;border-radius:6px;overflow:auto;margin-top:6px;">
+python manage.py makemigrations
+python manage.py migrate
+          </pre>
+        </div>
+      </a-alert>
+
       <a-form layout="vertical" style="width: 100%">
         <a-space size="large" direction="vertical" fill>
           <a-grid :cols="4" :col-gap="16">
@@ -112,7 +123,7 @@
   </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, h } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { submitCodegen } from '@/api/codegen'
 
@@ -251,14 +262,16 @@ const handleGenerate = async () => {
   try {
     const payload = buildPayload()
     await submitCodegen(payload)
-    const modal = Modal.success({
-      title: '生成成功',
-      content: '前端、后端生成成功',
-      okText: '刷新页面',
+    Modal.success({
+      title: '生成成功 - 请执行数据库迁移',
+      content: () => h('div', { style: 'line-height:1.6' }, [
+        h('p', '后端模型已生成，为使数据库生效，请在 backend 目录执行：'),
+        h('pre', { style: 'background:#f6f8fa;padding:8px;border-radius:6px;overflow:auto' }, 'python manage.py makemigrations\npython manage.py migrate'),
+        h('p', '完成后刷新页面即可使用。')
+      ]),
+      okText: '我已执行迁移，刷新',
       onOk: () => { window.location.reload() },
     })
-    // 1.2 秒后自动刷新当前页面
-    setTimeout(() => { try { modal.close() } catch(e) {} window.location.reload() }, 1200)
   } catch (e) {
     Message.error('生成失败')
   } finally {
