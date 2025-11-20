@@ -1,5 +1,6 @@
 一、本地快速体验（开发模式）
-
+- Python 3.12+
+- Node.js 22+
 1. 后端（Django + DRF）
    - 进入后端目录：
      cd backend
