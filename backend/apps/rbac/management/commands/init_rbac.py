@@ -64,6 +64,7 @@ class Command(BaseCommand):
         menu_system = self._get_or_create_menu('系统管理', 'system', '', 'icon-settings', None, 1)
         menu_monitor_root = self._get_or_create_menu('系统监控', 'monitor', '', 'icon-dashboard', None, 2)
         menu_tools = self._get_or_create_menu('系统工具', 'tools', '', 'icon-tool', None, 3)
+        menu_office = self._get_or_create_menu('系统办公', 'office', '', 'icon-file', None, 4)
 
         # 系统管理
         menu_user = self._get_or_create_menu('用户管理', 'user', 'system/user/index', 'icon-user', menu_system, 1)
@@ -83,6 +84,9 @@ class Command(BaseCommand):
         # 系统工具
         menu_codegen = self._get_or_create_menu('代码生成器', 'codegen', 'system/codegen/index', 'icon-code', menu_tools, 1)
         menu_example = self._get_or_create_menu('示例管理', 'example', 'curdexample/index', 'icon-apps', menu_tools, 2)
+
+        # 系统办公
+        menu_document = self._get_or_create_menu('在线文档', 'document', 'office/document/index', 'icon-file', menu_office, 1)
 
         self.stdout.write(self.style.SUCCESS('  ✓ 创建菜单: 系统管理 / 系统监控 / 系统工具 分组完成'))
 
@@ -154,6 +158,14 @@ class Command(BaseCommand):
         perms.append(self._get_or_create_permission('系统设置批量更新', 'system_setting:bulk_update', 'POST', '/api/system/settings/bulk_update/', menu_system_setting))
         perms.append(self._get_or_create_permission('系统设置按键获取', 'system_setting:get_by_key', 'GET', '/api/system/settings/get_by_key/', menu_system_setting))
 
+        # 在线文档权限（归属系统办公）
+        perms.append(self._get_or_create_permission('文档列表', 'document:list', 'GET', '/api/office/documents/', menu_document))
+        perms.append(self._get_or_create_permission('文档创建', 'document:create', 'POST', '/api/office/documents/', menu_document))
+        perms.append(self._get_or_create_permission('文档更新', 'document:update', 'PUT', r'/api/office/documents/\\d+/', menu_document))
+        perms.append(self._get_or_create_permission('文档部分更新', 'document:partial_update', 'PATCH', r'/api/office/documents/\\d+/', menu_document))
+        perms.append(self._get_or_create_permission('文档删除', 'document:delete', 'DELETE', r'/api/office/documents/\\d+/', menu_document))
+        perms.append(self._get_or_create_permission('文档置顶', 'document:toggle_pin', 'POST', r'/api/office/documents/\\d+/toggle_pin/', menu_document))
+
         self.stdout.write(self.style.SUCCESS(f'  ✓ 创建权限: {len(perms)} 个'))
 
         # 4. 创建角色
@@ -162,13 +174,15 @@ class Command(BaseCommand):
         role_admin.permissions.set(perms)
         role_admin.menus.set([
             # 顶级
-            menu_dashboard, menu_system, menu_monitor_root, menu_tools,
+            menu_dashboard, menu_system, menu_monitor_root, menu_tools, menu_office,
             # 系统管理
             menu_user, menu_role, menu_menu, menu_permission, menu_org, menu_system_setting,
             # 系统监控
             menu_monitor, menu_operation_log, menu_login_log, menu_tasks,
             # 系统工具
             menu_codegen, menu_example,
+            # 系统办公
+            menu_document,
         ])
         role_admin.custom_data_organizations.set([org_root, org_admin])
         
