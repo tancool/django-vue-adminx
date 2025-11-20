@@ -20,37 +20,76 @@
               style="width: 100%"
               allow-clear
               @search="handleSearchUser"
+              @input="handleSearchUser"
             />
           </div>
           <div class="conversation-list">
-            <div
-              v-for="conv in filteredConversations"
-              :key="conv.user_id"
-              class="conversation-item"
-              :class="{ active: currentUserId === conv.user_id }"
-              @click="selectConversation(conv.user_id, conv.username)"
-            >
-              <div class="conversation-avatar">
-                <a-avatar :size="40">{{ conv.username.charAt(0).toUpperCase() }}</a-avatar>
-              </div>
-              <div class="conversation-content">
-                <div class="conversation-header">
-                  <span class="conversation-name">{{ conv.username }}</span>
-                  <span class="conversation-time" v-if="conv.last_message_time">
-                    {{ formatTime(conv.last_message_time) }}
-                  </span>
+            <!-- 搜索结果 -->
+            <template v-if="searchUser && searchResults.length > 0">
+              <div
+                v-for="user in searchResults"
+                :key="user.user_id"
+                class="conversation-item"
+                :class="{ active: currentUserId === user.user_id }"
+                @click="selectConversation(user.user_id, user.username)"
+              >
+                <div class="conversation-avatar">
+                  <a-avatar :size="40">{{ user.username.charAt(0).toUpperCase() }}</a-avatar>
                 </div>
-                <div class="conversation-preview">
-                  <span class="preview-text">{{ conv.last_message || '暂无消息' }}</span>
-                  <a-badge
-                    v-if="conv.unread_count > 0"
-                    :count="conv.unread_count"
-                    :number-style="{ backgroundColor: '#f53f3f' }"
-                  />
+                <div class="conversation-content">
+                  <div class="conversation-header">
+                    <span class="conversation-name">{{ user.username }}</span>
+                    <a-tag v-if="!user.has_conversation" size="small" color="blue">新对话</a-tag>
+                    <span class="conversation-time" v-else-if="user.last_message_time">
+                      {{ formatTime(user.last_message_time) }}
+                    </span>
+                  </div>
+                  <div class="conversation-preview">
+                    <span class="preview-text">{{ user.last_message || '点击开始聊天' }}</span>
+                    <a-badge
+                      v-if="user.unread_count > 0"
+                      :count="user.unread_count"
+                      :number-style="{ backgroundColor: '#f53f3f' }"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-            <a-empty v-if="filteredConversations.length === 0" description="暂无对话" />
+            </template>
+            <!-- 对话列表 -->
+            <template v-else>
+              <div
+                v-for="conv in filteredConversations"
+                :key="conv.user_id"
+                class="conversation-item"
+                :class="{ active: currentUserId === conv.user_id }"
+                @click="selectConversation(conv.user_id, conv.username)"
+              >
+                <div class="conversation-avatar">
+                  <a-avatar :size="40">{{ conv.username.charAt(0).toUpperCase() }}</a-avatar>
+                </div>
+                <div class="conversation-content">
+                  <div class="conversation-header">
+                    <span class="conversation-name">{{ conv.username }}</span>
+                    <span class="conversation-time" v-if="conv.last_message_time">
+                      {{ formatTime(conv.last_message_time) }}
+                    </span>
+                  </div>
+                  <div class="conversation-preview">
+                    <span class="preview-text">{{ conv.last_message || '暂无消息' }}</span>
+                    <a-badge
+                      v-if="conv.unread_count > 0"
+                      :count="conv.unread_count"
+                      :number-style="{ backgroundColor: '#f53f3f' }"
+                    />
+                  </div>
+                </div>
+              </div>
+              <a-empty v-if="filteredConversations.length === 0 && !searchUser" description="暂无对话，搜索用户开始聊天" />
+            </template>
+            <!-- 搜索中 -->
+            <a-spin v-if="searching" :style="{ width: '100%', padding: '20px', textAlign: 'center' }" />
+            <!-- 搜索无结果 -->
+            <a-empty v-if="searchUser && searchResults.length === 0 && !searching" description="未找到用户" />
           </div>
         </div>
 
@@ -116,12 +155,14 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
-import { getConversations, getMessagesWithUser, sendMessage, markAllRead } from '@/api/chat'
+import { getConversations, getMessagesWithUser, sendMessage, markAllRead, getUsers } from '@/api/chat'
 import { getUserInfo } from '@/api/user'
 
 const currentUser = ref({})
 const conversations = ref([])
 const searchUser = ref('')
+const searchResults = ref([])
+const searching = ref(false)
 const currentUserId = ref(null)
 const currentUserName = ref('')
 const messages = ref([])
@@ -131,16 +172,11 @@ const messagesListRef = ref(null)
 const wsConnected = ref(false)
 let ws = null
 let pingTimer = null
+let searchTimer = null
 
 // 过滤后的对话列表
 const filteredConversations = computed(() => {
-  if (!searchUser.value) {
-    return conversations.value
-  }
-  const keyword = searchUser.value.toLowerCase()
-  return conversations.value.filter(conv => 
-    conv.username.toLowerCase().includes(keyword)
-  )
+  return conversations.value
 })
 
 // 获取当前用户信息
@@ -168,6 +204,9 @@ const loadConversations = async () => {
 const selectConversation = async (userId, username) => {
   currentUserId.value = userId
   currentUserName.value = username
+  // 清空搜索
+  searchUser.value = ''
+  searchResults.value = []
   await loadMessages(userId)
   // 标记为已读
   try {
@@ -176,6 +215,18 @@ const selectConversation = async (userId, username) => {
     const conv = conversations.value.find(c => c.user_id === userId)
     if (conv) {
       conv.unread_count = 0
+    } else {
+      // 如果用户不在对话列表中，添加进去（从搜索结果中获取信息）
+      const searchUser = searchResults.value.find(u => u.user_id === userId)
+      if (searchUser) {
+        conversations.value.unshift({
+          user_id: userId,
+          username: username,
+          last_message: null,
+          last_message_time: null,
+          unread_count: 0,
+        })
+      }
     }
   } catch (e) {
     console.error('标记已读失败:', e)
@@ -245,7 +296,32 @@ const markAllAsRead = async () => {
 
 // 搜索用户
 const handleSearchUser = () => {
-  // 搜索逻辑已在 computed 中处理
+  // 清除之前的定时器
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+  }
+  
+  // 如果没有搜索关键词，清空搜索结果
+  if (!searchUser.value.trim()) {
+    searchResults.value = []
+    searching.value = false
+    return
+  }
+  
+  // 防抖：500ms后执行搜索
+  searching.value = true
+  searchTimer = setTimeout(async () => {
+    try {
+      const data = await getUsers(searchUser.value.trim())
+      searchResults.value = data
+    } catch (e) {
+      console.error('搜索用户失败:', e)
+      Message.error('搜索用户失败')
+      searchResults.value = []
+    } finally {
+      searching.value = false
+    }
+  }, 500)
 }
 
 // 滚动到底部
@@ -399,7 +475,13 @@ const updateConversationFromMessage = (messageData) => {
       // 如果是接收的消息，增加未读数（如果不在当前对话中）
       if (currentUserId.value !== otherUserId) {
         conv.unread_count = (conv.unread_count || 0) + 1
+      } else {
+        // 如果在当前对话中，清除未读数
+        conv.unread_count = 0
       }
+    } else {
+      // 如果是发送的消息，清除未读数
+      conv.unread_count = 0
     }
   } else {
     // 创建新对话
@@ -422,6 +504,11 @@ const updateConversationFromMessage = (messageData) => {
     const timeB = b.last_message_time ? new Date(b.last_message_time).getTime() : 0
     return timeB - timeA
   })
+  
+  // 如果发送了消息，重新加载对话列表以确保数据同步
+  if (messageData.sender_id === currentUser.value.id) {
+    loadConversations()
+  }
 }
 
 // 心跳检测
@@ -459,6 +546,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disconnectWebSocket()
+  // 清理搜索定时器
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+  }
 })
 </script>
 

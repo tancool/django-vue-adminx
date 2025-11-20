@@ -62,3 +62,16 @@ export function markAllRead(userId) {
   })
 }
 
+/**
+ * 获取可聊天的用户列表
+ * @param {string} search - 搜索关键词（可选）
+ * @returns {Promise} 返回用户列表
+ */
+export function getUsers(search = '') {
+  return request({
+    url: '/api/chat/messages/users/',
+    method: 'get',
+    params: search ? { search } : {}
+  })
+}
+

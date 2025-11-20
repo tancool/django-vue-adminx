@@ -1,5 +1,6 @@
 """聊天模块视图。"""
 
+from datetime import datetime, timezone as dt_timezone
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Max, Count, Case, When, IntegerField
 from django.utils import timezone
@@ -221,3 +222,51 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
                 }
             }
         )
+
+    @action(detail=False, methods=['get'])
+    def users(self, request):
+        """获取可聊天的用户列表（排除自己）。"""
+        user = request.user
+        search = request.query_params.get('search', '').strip()
+        
+        # 获取所有用户（排除自己）
+        queryset = User.objects.exclude(id=user.id).filter(is_active=True)
+        
+        # 如果有搜索关键词，过滤用户名
+        if search:
+            queryset = queryset.filter(username__icontains=search)
+        
+        # 获取每个用户的最新消息和未读数（如果有）
+        users_list = []
+        for other_user in queryset[:50]:  # 限制返回50个用户
+            # 获取最新消息
+            last_message = ChatMessage.objects.filter(
+                Q(sender=user, receiver=other_user) | Q(sender=other_user, receiver=user)
+            ).order_by('-created_at').first()
+            
+            # 获取未读消息数
+            unread_count = ChatMessage.objects.filter(
+                sender=other_user,
+                receiver=user,
+                is_read=False
+            ).count()
+            
+            users_list.append({
+                'user_id': other_user.id,
+                'username': other_user.username,
+                'email': getattr(other_user, 'email', ''),
+                'last_message': last_message.content if last_message else None,
+                'last_message_time': last_message.created_at if last_message else None,
+                'unread_count': unread_count,
+                'has_conversation': last_message is not None,
+            })
+        
+        # 按是否有对话和最后消息时间排序
+        # 使用一个很早的日期作为默认值
+        min_datetime = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
+        users_list.sort(key=lambda x: (
+            not x['has_conversation'],  # 有对话的排在前面
+            x['last_message_time'] if x['last_message_time'] else min_datetime,  # 然后按时间排序
+        ), reverse=True)
+        
+        return Response(users_list)
