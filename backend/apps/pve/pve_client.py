@@ -1,10 +1,7 @@
 """PVE API客户端：封装Proxmox VE API调用。"""
 
 import requests
-from requests.auth import HTTPBasicAuth
-from urllib.parse import urljoin
-import json
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,48 +10,36 @@ logger = logging.getLogger(__name__)
 class PVEAPIClient:
     """PVE API客户端类。"""
     
-    def __init__(self, host: str, port: int = 8006, username: str = None, 
-                 password: str = None, token_id: str = None, 
-                 token_secret: str = None, use_token: bool = False,
-                 verify_ssl: bool = False):
+    def __init__(self, host: str, port: int = 8006, token_id: str = None, 
+                 token_secret: str = None, verify_ssl: bool = False):
         """
         初始化PVE API客户端。
         
         Args:
             host: PVE服务器地址
             port: PVE API端口，默认8006
-            username: 用户名（使用密码认证时）
-            password: 密码（使用密码认证时）
-            token_id: Token ID（使用Token认证时）
-            token_secret: Token Secret（使用Token认证时）
-            use_token: 是否使用Token认证
+            token_id: Token ID
+            token_secret: Token Secret
             verify_ssl: 是否验证SSL证书
         """
         self.host = host
         self.port = port
         self.base_url = f"https://{host}:{port}/api2/json"
         self.verify_ssl = verify_ssl
-        self.use_token = use_token
         
-        if use_token and token_id and token_secret:
-            # 使用Token认证
-            self.auth_header = {
-                'Authorization': f'PVEAPIToken={token_id}={token_secret}'
-            }
-            self.auth = None
-        else:
-            # 使用用户名密码认证
-            self.auth = HTTPBasicAuth(username, password)
-            self.auth_header = {}
+        if not token_id or not token_secret:
+            raise ValueError("Token ID 和 Token Secret 是必需的")
+        
+        # 使用Token认证
+        self.auth_header = {
+            'Authorization': f'PVEAPIToken={token_id}={token_secret}'
+        }
         
         self.session = requests.Session()
-        if self.auth:
-            self.session.auth = self.auth
-        if self.auth_header:
-            self.session.headers.update(self.auth_header)
+        self.session.headers.update(self.auth_header)
         self.session.verify = verify_ssl
     
-    def _request(self, method: str, endpoint: str, params: Dict = None, data: Dict = None) -> Dict:
+    def _request(self, method: str, endpoint: str, params: Dict = None, data: Dict = None) -> Union[Dict, List]:
         """
         发送API请求。
         
@@ -70,7 +55,10 @@ class PVEAPIClient:
         Raises:
             Exception: API请求失败时抛出异常
         """
-        url = urljoin(self.base_url, endpoint)
+        # 确保endpoint以/开头，然后直接拼接（不使用urljoin，避免路径被替换）
+        if not endpoint.startswith('/'):
+            endpoint = '/' + endpoint
+        url = self.base_url.rstrip('/') + endpoint
         
         try:
             if method.upper() == 'GET':
@@ -84,7 +72,33 @@ class PVEAPIClient:
             else:
                 raise ValueError(f"不支持的HTTP方法: {method}")
             
-            response.raise_for_status()
+            # 检查HTTP状态码
+            if response.status_code >= 400:
+                # 尝试解析错误信息
+                try:
+                    error_data = response.json()
+                    # PVE API错误格式可能是 {"errors": {"param": "error message"}} 或 {"data": null, "errors": {...}}
+                    if 'errors' in error_data:
+                        errors = error_data['errors']
+                        if isinstance(errors, dict):
+                            # 提取所有错误信息
+                            error_messages = []
+                            for key, value in errors.items():
+                                if isinstance(value, dict) and 'message' in value:
+                                    error_messages.append(f"{key}: {value['message']}")
+                                elif isinstance(value, str):
+                                    error_messages.append(f"{key}: {value}")
+                                else:
+                                    error_messages.append(f"{key}: {str(value)}")
+                            error_msg = '\n'.join(error_messages) if error_messages else str(errors)
+                        else:
+                            error_msg = str(errors)
+                    else:
+                        error_msg = error_data.get('message', '') or response.text
+                except:
+                    error_msg = response.text or f"HTTP {response.status_code}"
+                raise Exception(f"PVE API错误 ({response.status_code}): {error_msg}")
+            
             result = response.json()
             
             # PVE API返回格式: {"data": {...}}
@@ -93,24 +107,34 @@ class PVEAPIClient:
             return result
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"PVE API请求失败: {method} {url}, 错误: {str(e)}")
-            raise Exception(f"PVE API请求失败: {str(e)}")
+            error_msg = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    error_msg = error_data.get('errors', {}).get('message', '') or error_data.get('message', '') or e.response.text
+                except:
+                    error_msg = e.response.text or str(e)
+            logger.error(f"PVE API请求失败: {method} {url}, 错误: {error_msg}")
+            raise Exception(f"PVE API请求失败: {error_msg}")
     
     def get_version(self) -> Dict:
         """获取PVE版本信息。"""
         return self._request('GET', '/version')
     
-    def get_nodes(self) -> dict:
+    def get_nodes(self) -> List[Dict]:
         """获取所有节点列表。"""
-        return self._request('GET', '/nodes')
+        result = self._request('GET', '/nodes')
+        return result if isinstance(result, list) else [result]
     
     def get_node_status(self, node: str) -> Dict:
         """获取节点状态。"""
-        return self._request('GET', f'/nodes/{node}/status')
+        result = self._request('GET', f'/nodes/{node}/status')
+        return result if isinstance(result, dict) else {}
     
-    def get_vms(self, node: str) -> dict:
+    def get_vms(self, node: str) -> List[Dict]:
         """获取节点上的所有虚拟机。"""
-        return self._request('GET', f'/nodes/{node}/qemu')
+        result = self._request('GET', f'/nodes/{node}/qemu')
+        return result if isinstance(result, list) else [result]
     
     def get_vm_status(self, node: str, vmid: int) -> Dict:
         """获取虚拟机状态。"""
@@ -120,26 +144,38 @@ class PVEAPIClient:
         """获取虚拟机配置。"""
         return self._request('GET', f'/nodes/{node}/qemu/{vmid}/config')
     
-    def create_vm(self, node: str, vmid: int, config: Dict) -> dict:
+    def update_vm_config(self, node: str, vmid: int, params: Dict) -> Dict:
+        """
+        更新虚拟机硬件配置。
+        
+        Args:
+            node: 节点名称
+            vmid: 虚拟机ID
+            params: 需要更新的配置参数
+        """
+        if not params:
+            raise ValueError("params 不能为空")
+        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/config', params=params)
+    
+    def create_vm(self, node: str, vmid: int, config: Dict) -> Dict:
         """
         创建虚拟机。
         
         Args:
             node: 节点名称
-            vmid: 虚拟机ID
-            config: 虚拟机配置字典
-            
+            vmid: 虚拟机ID（已经在config中，这里只是为了类型检查）
+            config: 虚拟机配置字典，包含所有参数包括vmid
+        
         Returns:
             UPID（任务ID）
         """
-        # 创建虚拟机
-        params = {'vmid': vmid}
-        params.update(config)
-        result = self._request('POST', f'/nodes/{node}/qemu', params=params)
+        # PVE API创建虚拟机使用URL参数（表单格式）
+        # config已经包含了所有参数，包括vmid
+        result = self._request('POST', f'/nodes/{node}/qemu', params=config)
         return result
     
     def clone_vm(self, node: str, newid: int, source_vmid: int, 
-                 name: str = None, full: bool = False) -> str:
+                 name: str = None, full: bool = False) -> Dict:
         """
         克隆虚拟机。
         
@@ -163,35 +199,83 @@ class PVEAPIClient:
         result = self._request('POST', f'/nodes/{node}/qemu/{source_vmid}/clone', params=params)
         return result
     
-    def start_vm(self, node: str, vmid: int) -> str:
+    def start_vm(self, node: str, vmid: int) -> Dict:
         """启动虚拟机。"""
-        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/start')
+        result = self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/start')
+        return result if isinstance(result, dict) else {}
     
-    def stop_vm(self, node: str, vmid: int) -> str:
+    def stop_vm(self, node: str, vmid: int) -> Dict:
         """停止虚拟机。"""
-        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/stop')
+        result = self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/stop')
+        return result if isinstance(result, dict) else {}
     
-    def shutdown_vm(self, node: str, vmid: int) -> str:
+    def shutdown_vm(self, node: str, vmid: int) -> Dict:
         """关闭虚拟机（优雅关闭）。"""
-        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/shutdown')
+        result = self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/shutdown')
+        return result if isinstance(result, dict) else {}
     
-    def reboot_vm(self, node: str, vmid: int) -> str:
+    def reboot_vm(self, node: str, vmid: int) -> Dict:
         """重启虚拟机。"""
-        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/reboot')
+        result = self._request('POST', f'/nodes/{node}/qemu/{vmid}/status/reboot')
+        return result if isinstance(result, dict) else {}
     
-    def delete_vm(self, node: str, vmid: int) -> str:
+    def delete_vm(self, node: str, vmid: int) -> Dict:
         """删除虚拟机。"""
-        return self._request('DELETE', f'/nodes/{node}/qemu/{vmid}')
+        result = self._request('DELETE', f'/nodes/{node}/qemu/{vmid}')
+        return result if isinstance(result, dict) else {}
     
     def get_storage(self, node: str) -> List[Dict]:
         """获取存储列表。"""
-        return self._request('GET', f'/nodes/{node}/storage')
+        result = self._request('GET', f'/nodes/{node}/storage')
+        return result if isinstance(result, list) else [result] if result else []
     
     def get_network(self, node: str) -> List[Dict]:
         """获取网络接口列表。"""
-        return self._request('GET', f'/nodes/{node}/network')
+        result = self._request('GET', f'/nodes/{node}/network')
+        return result if isinstance(result, list) else [result] if result else []
     
     def get_task_status(self, node: str, upid: str) -> Dict:
         """获取任务状态。"""
         return self._request('GET', f'/nodes/{node}/tasks/{upid}/status')
+    
+    def get_storage_content(self, node: str, storage: str, content_type: str = None) -> List[Dict]:
+        """
+        获取存储内容。
+        
+        Args:
+            node: 节点名称
+            storage: 存储名称
+            content_type: 内容类型（iso, vztmpl, images等），如果为None则返回所有类型
+            
+        Returns:
+            存储内容列表
+        """
+        params = {}
+        if content_type:
+            params['content'] = content_type
+        result = self._request('GET', f'/nodes/{node}/storage/{storage}/content', params=params)
+        return result if isinstance(result, list) else [result] if result else []
+    
+    def get_next_vmid(self, vmid: int = None) -> int:
+        """
+        获取下一个可用的VMID。
+        
+        Args:
+            vmid: 可选的VMID，用于检查该VMID是否可用（在检查时）
+            
+        Returns:
+            下一个可用的VMID
+        """
+        params = {}
+        if vmid:
+            params['vmid'] = vmid
+        result = self._request('GET', '/cluster/nextid', params=params)
+        # PVE API返回格式可能是 {"data": 100} 或直接返回数字
+        if isinstance(result, dict) and 'data' in result:
+            return int(result['data'])
+        elif isinstance(result, (int, str)):
+            return int(result)
+        else:
+            # 如果API返回格式不符合预期，回退到默认值
+            return 100
 

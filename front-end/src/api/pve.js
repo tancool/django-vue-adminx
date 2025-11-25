@@ -98,6 +98,36 @@ export function getNodeStorage(serverId, node) {
 }
 
 /**
+ * 获取存储中的ISO镜像列表
+ */
+export function getStorageISO(serverId, node, storage) {
+  return request({
+    url: `/api/pve/servers/${serverId}/nodes/${node}/storage/${storage}/iso/`,
+    method: 'get'
+  })
+}
+
+/**
+ * 获取节点网络接口列表
+ */
+export function getNodeNetwork(serverId, node) {
+  return request({
+    url: `/api/pve/servers/${serverId}/nodes/${node}/network/`,
+    method: 'get'
+  })
+}
+
+/**
+ * 获取下一个可用的VMID
+ */
+export function getNextVMID(serverId) {
+  return request({
+    url: `/api/pve/servers/${serverId}/next-vmid/`,
+    method: 'get'
+  })
+}
+
+/**
  * 虚拟机相关API
  */
 
@@ -161,6 +191,17 @@ export function syncVMStatus(id) {
   return request({
     url: `/api/pve/virtual-machines/${id}/sync_status/`,
     method: 'get'
+  })
+}
+
+/**
+ * 更新虚拟机硬件配置
+ */
+export function updateVirtualMachineHardware(id, data) {
+  return request({
+    url: `/api/pve/virtual-machines/${id}/update-hardware/`,
+    method: 'post',
+    data
   })
 }
 

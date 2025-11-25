@@ -1,5 +1,6 @@
 """PVE模块视图集。"""
 
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -20,8 +21,11 @@ from .serializers import (
     VirtualMachineDetailSerializer,
     VirtualMachineCreateSerializer,
     VirtualMachineActionSerializer,
+    VirtualMachineHardwareUpdateSerializer,
 )
 from .pve_client import PVEAPIClient
+
+logger = logging.getLogger(__name__)
 
 
 class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.ModelViewSet):
@@ -50,11 +54,8 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
@@ -81,11 +82,8 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
@@ -105,11 +103,8 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
@@ -129,11 +124,8 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
@@ -142,6 +134,73 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
         except Exception as e:
             return Response({
                 'detail': f'获取存储列表失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/storage/(?P<storage>[^/.]+)/iso')
+    def node_storage_iso(self, request, pk=None, node=None, storage=None):
+        """获取存储中的ISO镜像列表。"""
+        server = self.get_object()
+        
+        try:
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            # 获取ISO类型的内容
+            content = client.get_storage_content(node, storage, content_type='iso')
+            # 过滤出ISO文件
+            iso_files = [item for item in content if item.get('content') == 'iso' and item.get('volid', '').endswith('.iso')]
+            return Response(iso_files)
+        except Exception as e:
+            return Response({
+                'detail': f'获取ISO镜像列表失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/network')
+    def node_network(self, request, pk=None, node=None):
+        """获取节点网络接口列表。"""
+        server = self.get_object()
+        
+        try:
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            network = client.get_network(node)
+            return Response(network)
+        except Exception as e:
+            return Response({
+                'detail': f'获取网络接口失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'], url_path='next-vmid')
+    def next_vmid(self, request, pk=None):
+        """获取下一个可用的VMID。"""
+        server = self.get_object()
+        
+        try:
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            # 获取下一个VMID
+            vmid = client.get_next_vmid()
+            return Response({'vmid': vmid})
+        except Exception as e:
+            return Response({
+                'detail': f'获取下一个VMID失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -181,45 +240,106 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
             # 构建虚拟机配置
             vmid = data.get('vmid')
-            if not vmid:
-                # 如果没有指定vmid，从PVE API获取下一个可用的vmid
-                vms = client.get_vms(node)
-                existing_vmids = [vm.get('vmid') for vm in vms if 'vmid' in vm]
-                vmid = max(existing_vmids) + 1 if existing_vmids else 100
+            # 解析磁盘大小（默认10G，最小1G）
+            raw_disk_size = data.get('disk_size', '10G') or '10G'
+            disk_size_str = str(raw_disk_size).strip()
+            disk_size_gb = 10
+            try:
+                normalized_disk_size = disk_size_str.upper()
+                if normalized_disk_size.endswith('G'):
+                    disk_size_gb = int(normalized_disk_size.replace('G', '') or 0)
+                elif normalized_disk_size.endswith('M'):
+                    disk_size_gb = int(normalized_disk_size.replace('M', '') or 0) // 1024
+                else:
+                    disk_size_gb = int(normalized_disk_size)
+            except (ValueError, AttributeError, TypeError):
+                logger.warning(f'无法解析磁盘大小 {disk_size_str}，使用默认值10GB')
+                disk_size_gb = 10
+            if disk_size_gb < 1:
+                disk_size_gb = 1
             
-            config = {
-                'name': data['name'],
-                'cores': data.get('cores', 1),
-                'memory': data.get('memory', 512),
-                'ostype': data.get('ostype', 'l26'),
+            # 构建PVE API参数（使用URL参数，表单格式）
+            # PVE API创建虚拟机使用URL参数，所有配置都作为URL参数传递
+            params = {
+                'vmid': vmid,
+                'name': str(data['name']),
+                'sockets': int(data.get('sockets', 1)),
+                'cores': int(data.get('cores', 1)),
+                'cpu': str(data.get('cpu', 'x86-64-v2-AES')),
+                'memory': int(data.get('memory', 512)),
+                'ostype': str(data.get('ostype', 'l26')),
+                'scsihw': str(data.get('scsihw', 'virtio-scsi-single')),
+                'numa': 1 if data.get('numa', False) else 0,  # NUMA设置，转换为0或1
             }
             
-            # 磁盘配置
-            disk_size = data.get('disk_size', '10G')
+            # 磁盘配置 - PVE API格式根据存储类型不同
             disk_storage = data.get('disk_storage')
             if disk_storage:
-                config['scsi0'] = f'{disk_storage}:{disk_size}'
+                # 获取存储信息以确定存储类型
+                try:
+                    storages = client.get_storage(node)
+                    storage_info = next((s for s in storages if s.get('storage') == disk_storage), None)
+                    storage_type = storage_info.get('type') if storage_info else None
+                    
+                    # 根据存储类型使用不同的格式
+                    if storage_type == 'rbd':
+                        # RBD/Ceph存储格式：scsi0=storage:size（数字，无单位）
+                        # 例如：ceph:32 表示32GB
+                        params['scsi0'] = f'{disk_storage}:{disk_size_gb}'
+                        # 可选：添加iothread参数提升性能
+                        params['scsi0'] += ',iothread=on'
+                    elif storage_type == 'lvm' or storage_type == 'lvmthin':
+                        # LVM/LVM-Thin存储格式：scsi0=storage:size（数字，无单位）
+                        # 例如：local-lvm:32 表示32GB
+                        params['scsi0'] = f'{disk_storage}:{disk_size_gb}'
+                    else:
+                        # 其他存储类型（如dir, nfs等）使用标准格式：scsi0=storage:size（带单位）
+                        params['scsi0'] = f'{disk_storage}:{disk_size_str}'
+                except Exception as e:
+                    # 如果获取存储信息失败，尝试根据存储名称判断
+                    logger.warning(f'获取存储信息失败: {str(e)}')
+                    # 如果存储名称包含ceph、rbd、lvm，使用数字格式
+                    if 'ceph' in disk_storage.lower() or 'rbd' in disk_storage.lower():
+                        params['scsi0'] = f'{disk_storage}:{disk_size_gb},iothread=on'
+                    elif 'lvm' in disk_storage.lower():
+                        params['scsi0'] = f'{disk_storage}:{disk_size_gb}'
+                    else:
+                        params['scsi0'] = f'{disk_storage}:{disk_size_str}'
             
-            # 网络配置
-            network_bridge = data.get('network_bridge', 'vmbr0')
-            config['net0'] = f'virtio,bridge={network_bridge}'
+            # 网络配置 - PVE API格式：net0=model,bridge=bridge_name,firewall=0|1
+            network_bridge = str(data.get('network_bridge', 'vmbr0'))
+            network_firewall = 1 if data.get('network_firewall', True) else 0
+            params['net0'] = f'virtio,bridge={network_bridge},firewall={network_firewall}'
             
-            # ISO配置（如果有）
+            # ISO配置（如果有）- PVE API格式：ide2=storage:iso/file.iso,media=cdrom
             if data.get('iso'):
-                config['ide2'] = f'{disk_storage}:iso/{data["iso"]},media=cdrom'
+                iso_value = str(data['iso'])
+                # 如果ISO值是完整路径（如 storage:iso/file.iso），直接使用
+                if ':' in iso_value:
+                    params['ide2'] = f'{iso_value},media=cdrom'
+                else:
+                    # 否则使用iso_storage或disk_storage拼接
+                    iso_storage = data.get('iso_storage') or disk_storage
+                    if iso_storage:
+                        params['ide2'] = f'{iso_storage}:iso/{iso_value},media=cdrom'
             
-            # 创建虚拟机
-            result = client.create_vm(node, vmid, config)
+            # 描述（如果有）
+            if data.get('description'):
+                params['description'] = str(data['description'])
+            
+            # 记录配置信息用于调试
+            logger.info(f'创建虚拟机参数: vmid={vmid}, node={node}, params={params}')
+            config_snapshot = params.copy()
+            
+            # 创建虚拟机 - 传递params作为URL参数
+            result = client.create_vm(node, vmid, params)
             
             # 等待任务完成（简化处理，实际应该轮询任务状态）
             # 这里先创建数据库记录
@@ -231,9 +351,9 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
                 status='stopped',
                 cpu_cores=data.get('cores', 1),
                 memory_mb=data.get('memory', 512),
-                disk_gb=int(disk_size.replace('G', '')) if 'G' in disk_size else 10,
+                disk_gb=disk_size_gb,
                 description=data.get('description', ''),
-                pve_config=config,
+                pve_config=config_snapshot,
                 created_by=request.user if request.user.is_authenticated else None,
             )
             
@@ -259,11 +379,8 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             
@@ -297,6 +414,54 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
                 'detail': f'操作失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['post'], url_path='update-hardware')
+    def update_hardware(self, request, pk=None):
+        """更新虚拟机硬件配置。"""
+        vm = self.get_object()
+        serializer = VirtualMachineHardwareUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data.get('params', {})
+        
+        if not params:
+            return Response({
+                'detail': '缺少需要更新的配置参数'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            server = vm.server
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            result = client.update_vm_config(vm.node, vm.vmid, params)
+            
+            # 更新数据库中的缓存配置
+            config = client.get_vm_config(vm.node, vm.vmid)
+            vm.pve_config = config
+            if 'cores' in config and 'sockets' in config:
+                vm.cpu_cores = config['cores'] * config['sockets']
+            elif 'cores' in config:
+                vm.cpu_cores = config['cores']
+            if 'memory' in config:
+                vm.memory_mb = config['memory']
+            vm.save()
+            
+            return Response({
+                'success': True,
+                'message': '硬件配置更新已提交',
+                'upid': result,
+                'config': config
+            })
+        except Exception as e:
+            logger.exception('更新虚拟机硬件配置失败')
+            return Response({
+                'detail': f'更新虚拟机硬件配置失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
     @action(detail=True, methods=['get'])
     def sync_status(self, request, pk=None):
         """同步虚拟机状态。"""
@@ -307,11 +472,8 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
             client = PVEAPIClient(
                 host=server.host,
                 port=server.port,
-                username=server.username,
-                password=server.password,
                 token_id=server.token_id,
                 token_secret=server.token_secret,
-                use_token=server.use_token,
                 verify_ssl=server.verify_ssl
             )
             

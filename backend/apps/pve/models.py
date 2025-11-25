@@ -10,11 +10,8 @@ class PVEServer(BaseAuditModel):
     name = models.CharField(max_length=100, verbose_name='服务器名称', help_text='PVE服务器的显示名称')
     host = models.CharField(max_length=255, verbose_name='服务器地址', help_text='PVE服务器IP或域名，如：192.168.1.100')
     port = models.IntegerField(default=8006, verbose_name='端口', help_text='PVE API端口，默认8006')
-    username = models.CharField(max_length=100, verbose_name='用户名', help_text='PVE登录用户名')
-    password = models.CharField(max_length=255, verbose_name='密码', help_text='PVE登录密码（建议使用API Token）')
-    token_id = models.CharField(max_length=100, blank=True, default='', verbose_name='Token ID', help_text='API Token ID（如果使用Token认证）')
-    token_secret = models.CharField(max_length=255, blank=True, default='', verbose_name='Token Secret', help_text='API Token Secret（如果使用Token认证）')
-    use_token = models.BooleanField(default=False, verbose_name='使用Token认证', help_text='是否使用Token认证而不是用户名密码')
+    token_id = models.CharField(max_length=100, verbose_name='Token ID', help_text='API Token ID')
+    token_secret = models.CharField(max_length=255, verbose_name='Token Secret', help_text='API Token Secret')
     verify_ssl = models.BooleanField(default=False, verbose_name='验证SSL', help_text='是否验证SSL证书')
     is_active = models.BooleanField(default=True, verbose_name='是否启用', help_text='是否启用此服务器配置')
     
