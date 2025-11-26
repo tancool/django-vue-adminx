@@ -98,7 +98,7 @@
                     v-if="record.editable"
                     type="text"
                     size="small"
-                    @click="openEditDialog(record.key)"
+                    @click="openEditDialog(record.editType || record.key, record.key)"
                   >
                     编辑
                   </a-button>
@@ -166,17 +166,20 @@
         </a-form-item>
       </template>
       <template v-else-if="editState.type === 'disk'">
-        <a-form-item field="scsi0" label="磁盘(scsi0)">
-          <a-input v-model="editForm.scsi0" placeholder="示例：local-lvm:32" />
+        <a-form-item
+          field="diskValue"
+          :label="`磁盘(${editState.targetKey || 'scsi0'})`"
+        >
+          <a-input v-model="editForm.diskValue" placeholder="示例：local-lvm:32" />
           <template #extra>
             直接使用PVE格式，支持 local-lvm:32、ceph-pool:32 等
           </template>
         </a-form-item>
       </template>
       <template v-else-if="editState.type === 'network'">
-        <a-form-item field="net0" label="网络(net0)">
+        <a-form-item field="networkValue" :label="`网络(${editState.targetKey || 'net0'})`">
           <a-input
-            v-model="editForm.net0"
+            v-model="editForm.networkValue"
             placeholder="示例：virtio,bridge=vmbr0,firewall=1"
           />
         </a-form-item>
@@ -476,12 +479,13 @@ const consoleLoading = ref(false)
 const consoleError = ref('')
 const rfb = ref(null)
 
- const editState = reactive({
-   visible: false,
-   type: '',
-   title: '',
-   submitting: false
- })
+const editState = reactive({
+  visible: false,
+  type: '',
+  title: '',
+  submitting: false,
+  targetKey: ''
+})
 
 const editForm = reactive({})
 const addState = reactive({
@@ -752,25 +756,49 @@ const hardwareRows = computed(() => {
 
   Object.keys(config).forEach((key) => {
     if (/^scsi\d+$/.test(key)) {
+      // SCSI 接口的硬盘，全部可编辑
       rows.push({
         key,
         label: `磁盘 (${key})`,
         value: config[key],
-        editable: key === 'scsi0'
+        editable: true,
+        editType: 'disk'
       })
     } else if (/^ide\d+$/.test(key)) {
+      // IDE 接口：包括硬盘和 CDROM，全部可编辑
+      const isCDROM = String(config[key]).includes('media=cdrom')
       rows.push({
         key,
-        label: `IDE设备 (${key})`,
+        label: isCDROM ? `CD/DVD (${key})` : `磁盘 (${key})`,
         value: config[key],
-        editable: key === 'ide2'
+        editable: true,
+        editType: 'disk'
+      })
+    } else if (/^virtio\d+$/.test(key)) {
+      // VirtIO 接口的硬盘，全部可编辑
+      rows.push({
+        key,
+        label: `磁盘 (${key})`,
+        value: config[key],
+        editable: true,
+        editType: 'disk'
+      })
+    } else if (/^sata\d+$/.test(key)) {
+      // SATA 接口的硬盘，全部可编辑
+      rows.push({
+        key,
+        label: `磁盘 (${key})`,
+        value: config[key],
+        editable: true,
+        editType: 'disk'
       })
     } else if (/^net\d+$/.test(key)) {
       rows.push({
         key,
         label: `网络 (${key})`,
         value: config[key],
-        editable: key === 'net0'
+        editable: true,
+        editType: 'network'
       })
     }
   })
@@ -893,10 +921,11 @@ const resetEditForm = () => {
   })
 }
 
-const openEditDialog = (type) => {
+const openEditDialog = (type, targetKey = '') => {
   if (!currentVM.value) {
     return
   }
+  editState.targetKey = targetKey || type || ''
   const config = getConfig()
   resetEditForm()
   editState.type = type
@@ -918,15 +947,15 @@ const openEditDialog = (type) => {
       })
       break
     case 'disk':
-      editState.title = '编辑磁盘 (scsi0)'
+      editState.title = `编辑磁盘 (${editState.targetKey || 'scsi0'})`
       Object.assign(editForm, {
-        scsi0: config.scsi0 || ''
+        diskValue: config[editState.targetKey || 'scsi0'] || ''
       })
       break
     case 'network':
-      editState.title = '编辑网络 (net0)'
+      editState.title = `编辑网络 (${editState.targetKey || 'net0'})`
       Object.assign(editForm, {
-        net0: config.net0 || ''
+        networkValue: config[editState.targetKey || 'net0'] || ''
       })
       break
     default:
@@ -953,11 +982,11 @@ const editFormRules = computed(() => {
       }
     case 'disk':
       return {
-        scsi0: [{ required: true, message: '请输入磁盘配置' }]
+        diskValue: [{ required: true, message: '请输入磁盘配置' }]
       }
     case 'network':
       return {
-        net0: [{ required: true, message: '请输入网络配置' }]
+        networkValue: [{ required: true, message: '请输入网络配置' }]
       }
     default:
       return {}
@@ -978,13 +1007,13 @@ const buildParams = () => {
         memory: Number(editForm.memory)
       }
     case 'disk':
-      return {
-        scsi0: editForm.scsi0
-      }
+      return editState.targetKey
+        ? { [editState.targetKey]: editForm.diskValue }
+        : { scsi0: editForm.diskValue }
     case 'network':
-      return {
-        net0: editForm.net0
-      }
+      return editState.targetKey
+        ? { [editState.targetKey]: editForm.networkValue }
+        : { net0: editForm.networkValue }
     default:
       return {}
   }
@@ -1357,6 +1386,8 @@ watch(
 .vm-detail {
   width: 100%;
   overflow: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .vm-detail-header {
@@ -1412,18 +1443,9 @@ watch(
   margin-top: 12px;
 }
 
-.novnc-wrapper {
-  width: 100%;
-  min-height: 420px;
-  border: 1px solid var(--color-border-2);
-  border-radius: 8px;
-  background: #000;
-  position: relative;
-  overflow: hidden;
-}
 
 .novnc-placeholder {
-  width: 100%;
+  width: 80%;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1440,7 +1462,7 @@ watch(
 }
 
 .pve-console-wrapper {
-  width: 100%;
+  width: 80%;
   min-height: 480px;
   border: 1px solid var(--color-border-2);
   border-radius: 8px;
@@ -1454,7 +1476,8 @@ watch(
 }
 
 .novnc-container {
-  width: 100%;
+  width: 80%;
+  max-width: 1200px;
   height: 600px;
   background: #000;
   position: relative;
@@ -1472,7 +1495,7 @@ watch(
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 100% !important;
+  width: 80% !important;
   height: 100% !important;
   margin: 0 auto !important;
   padding: 0 !important;
@@ -1485,17 +1508,10 @@ watch(
   display: block !important;
   margin: 0 auto !important;
   /* 不强制宽高，让 noVNC 的 scaleViewport 自动处理缩放，保持宽高比 */
-  max-width: 100% !important;
+  max-width: 80% !important;
   max-height: 100% !important;
   /* 确保 canvas 在容器中水平和垂直居中 */
   position: relative !important;
-}
-
-.pve-console-iframe {
-  width: 100%;
-  height: 480px;
-  border: 0;
-  background: #000;
 }
 
 /* 确保 a-card 内容区域也居中 */
@@ -1506,10 +1522,20 @@ watch(
 /* 确保控制台卡片内的内容居中 */
 :deep(.arco-tabs-content) {
   text-align: left;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 :deep(.arco-tabs-content .arco-card-body) {
   text-align: center;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* 确保控制台 tab 下的卡片不会超出视口 */
+:deep(.arco-tabs-content .arco-card) {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 </style>
 
