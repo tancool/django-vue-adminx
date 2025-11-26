@@ -67,7 +67,7 @@ class Command(BaseCommand):
         menu_office = self._get_or_create_menu('系统办公', 'office', '', 'icon-file', None, 4)
         menu_support = self._get_or_create_menu('客服中心', 'support', '', 'icon-customer-service', None, 5)
         menu_knowledge_root = self._get_or_create_menu('知识库', 'knowledge', '', 'icon-book', None, 6)
-        menu_pve = self._get_or_create_menu('PVE管理', 'pve', '', 'icon-server', None, 7)
+        menu_pve = self._get_or_create_menu('PVE管理', 'pve', '', 'icon-apps', None, 7)
         menu_tools_sheet = self._get_or_create_menu('在线表格', 'spreadsheet', 'tools/spreadsheet/index', 'icon-apps', menu_tools, 3)
 
         # 系统管理
@@ -97,8 +97,9 @@ class Command(BaseCommand):
         menu_knowledge_article = self._get_or_create_menu('知识文章', 'knowledge-article', 'knowledge/article/index', 'icon-book', menu_knowledge_root, 1)
         
         # PVE管理
-        menu_pve_server = self._get_or_create_menu('PVE服务器管理', 'pve-server', 'pve/server/index', 'icon-server', menu_pve, 1)
+        menu_pve_server = self._get_or_create_menu('PVE服务器管理', 'pve-server', 'pve/server/index', 'icon-computer', menu_pve, 1)
         menu_pve_vm = self._get_or_create_menu('虚拟机管理', 'pve-vm', 'pve/vm/index', 'icon-desktop', menu_pve, 2)
+        menu_pve_storage = self._get_or_create_menu('存储管理', 'pve-storage', 'pve/storage/index', 'icon-storage', menu_pve, 3)
 
         self.stdout.write(self.style.SUCCESS('  ✓ 创建菜单: 系统管理 / 系统监控 / 系统工具 / PVE管理 分组完成'))
 
@@ -206,6 +207,13 @@ class Command(BaseCommand):
         perms.append(self._get_or_create_permission('PVE服务器获取节点', 'pve_server:nodes', 'GET', r'/api/pve/servers/\\d+/nodes/', menu_pve_server))
         perms.append(self._get_or_create_permission('PVE服务器获取节点虚拟机', 'pve_server:node_vms', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/vms/', menu_pve_server))
         perms.append(self._get_or_create_permission('PVE服务器获取节点存储', 'pve_server:node_storage', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/', menu_pve_server))
+        perms.append(self._get_or_create_permission('PVE服务器存储ISO列表', 'pve_server:storage_iso', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/iso/', menu_pve_server))
+        
+        # PVE 存储管理权限
+        perms.append(self._get_or_create_permission('PVE存储服务器列表', 'pve_storage:servers', 'GET', '/api/pve/servers/', menu_pve_storage))
+        perms.append(self._get_or_create_permission('PVE存储节点列表', 'pve_storage:nodes', 'GET', r'/api/pve/servers/\\d+/nodes/', menu_pve_storage))
+        perms.append(self._get_or_create_permission('PVE存储节点存储列表', 'pve_storage:node_storage', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/', menu_pve_storage))
+        perms.append(self._get_or_create_permission('PVE存储ISO列表', 'pve_storage:storage_iso', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/iso/', menu_pve_storage))
         
         # 虚拟机管理权限
         perms.append(self._get_or_create_permission('虚拟机列表', 'pve_vm:list', 'GET', '/api/pve/virtual-machines/', menu_pve_vm))
@@ -239,7 +247,7 @@ class Command(BaseCommand):
             # 知识库
             menu_knowledge_article,
             # PVE管理
-            menu_pve_server, menu_pve_vm,
+            menu_pve_server, menu_pve_vm, menu_pve_storage,
         ])
         role_admin.custom_data_organizations.set([org_root, org_admin])
         
