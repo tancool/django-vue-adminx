@@ -205,3 +205,14 @@ export function updateVirtualMachineHardware(id, data) {
   })
 }
 
+/**
+ * 创建虚拟机控制台会话 (noVNC)
+ */
+export function createVMConsoleSession(id, data) {
+  return request({
+    url: `/api/pve/virtual-machines/${id}/console-session/`,
+    method: 'post',
+    data
+  })
+}
+

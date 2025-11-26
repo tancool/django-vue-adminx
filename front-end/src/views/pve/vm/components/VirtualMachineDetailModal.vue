@@ -41,10 +41,29 @@
             </a-card>
           </a-tab-pane>
           <a-tab-pane key="console" title="控制台">
-            <div class="console-placeholder">
-              <p>控制台连接功能开发中，可在PVE原生界面使用SPICE/VNC。</p>
-              <a-button type="outline" disabled>打开noVNC（即将上线）</a-button>
-            </div>
+            <a-card :bordered="false">
+              <a-alert type="info" show-icon style="margin-bottom: 12px;">
+                <template #title>提示</template>
+                控制台通过本系统代理访问 PVE，无需手动登录 PVE，但首次加载可能需要几秒钟。
+              </a-alert>
+              <div class="pve-console-wrapper">
+                <div v-if="consoleLoading" class="novnc-placeholder">
+                  <a-spin />
+                  <p style="margin-top: 12px;">正在建立控制台会话...</p>
+                </div>
+                <div v-else-if="consoleError" class="novnc-placeholder">
+                  <p>{{ consoleError }}</p>
+                  <a-button type="text" @click="initConsole">重试</a-button>
+                </div>
+                <!-- noVNC 容器始终存在，通过样式控制显示 -->
+                <div
+                  ref="novncContainer"
+                  id="noVNC_container"
+                  class="novnc-container"
+                  :style="{ display: consoleLoading || consoleError ? 'none' : 'block' }"
+                ></div>
+              </div>
+            </a-card>
           </a-tab-pane>
           <a-tab-pane key="hardware" title="硬件">
             <a-card :bordered="false">
@@ -419,8 +438,10 @@ import {
   updateVirtualMachineHardware,
   getNodeStorage,
   getNodeNetwork,
-  getStorageISO
+  getStorageISO,
+  createVMConsoleSession
 } from '@/api/pve'
+import RFB from '@novnc/novnc/core/rfb'
 
 const props = defineProps({
   visible: {
@@ -444,19 +465,23 @@ const visibleProxy = computed({
   set: (val) => emit('update:visible', val)
 })
 
-const detailLoading = ref(false)
-const detailActiveTab = ref('overview')
-const detailModalWidth = ref(960)
-const currentVM = ref(null)
-const editFormRef = ref(null)
-const addFormRef = ref(null)
+ const detailLoading = ref(false)
+ const detailActiveTab = ref('overview')
+ const detailModalWidth = ref(960)
+ const currentVM = ref(null)
+ const editFormRef = ref(null)
+ const addFormRef = ref(null)
+const novncContainer = ref(null)
+const consoleLoading = ref(false)
+const consoleError = ref('')
+const rfb = ref(null)
 
-const editState = reactive({
-  visible: false,
-  type: '',
-  title: '',
-  submitting: false
-})
+ const editState = reactive({
+   visible: false,
+   type: '',
+   title: '',
+   submitting: false
+ })
 
 const editForm = reactive({})
 const addState = reactive({
@@ -465,7 +490,149 @@ const addState = reactive({
   title: '',
   submitting: false
 })
-const addForm = reactive({})
+ const addForm = reactive({})
+
+const API_BASE = (import.meta.env.VITE_HOST || '').replace(/\/$/, '')
+
+const buildBackendUrl = (path) => {
+  if (!path) return ''
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path
+  }
+  const base = API_BASE || window.location.origin
+  if (path.startsWith('/')) {
+    return `${base}${path}`
+  }
+  return `${base}/${path}`
+}
+
+const initConsole = async () => {
+  if (!currentVM.value) return
+  
+  // 清理之前的连接
+  if (rfb.value) {
+    try {
+      rfb.value.disconnect()
+      rfb.value = null
+    } catch (e) {
+      console.warn('清理旧连接时出错:', e)
+    }
+  }
+  
+  consoleLoading.value = true
+  consoleError.value = ''
+  
+  try {
+    // 创建控制台会话
+    const session = await createVMConsoleSession(currentVM.value.id, { type: 'novnc' })
+    if (!session?.session_token) {
+      throw new Error('未获取到控制台会话信息')
+    }
+    
+    // 优先使用 proxy_url（完整的 WebSocket URL），如果没有则使用 proxy_path 构建
+    let wsUrl = ''
+    if (session.proxy_url) {
+      // 直接使用后端返回的完整 WebSocket URL
+      wsUrl = session.proxy_url
+    } else if (session.proxy_path) {
+      // 使用 proxy_path 构建完整的 WebSocket URL
+      const baseUrl = buildBackendUrl('')
+      const wsProtocol = baseUrl.startsWith('https') ? 'wss' : 'ws'
+      const wsHost = baseUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+      wsUrl = `${wsProtocol}://${wsHost}${session.proxy_path.startsWith('/') ? session.proxy_path : '/' + session.proxy_path}`
+    } else {
+      throw new Error('未获取到 WebSocket 代理路径')
+    }
+    
+    // 使用 password 字段作为 VNC 密码
+    const password = session.password || ''
+    
+    console.log('连接 noVNC:', {
+      wsUrl,
+      hasPassword: !!password,
+      vmid: session.vmid,
+      node: session.node
+    })
+    
+    // 等待 DOM 更新，确保 novncContainer 元素已经渲染
+    await nextTick()
+    
+    // 获取容器元素（优先使用 ref，如果不存在则通过 ID 获取）
+    const container = novncContainer.value || document.getElementById('noVNC_container')
+    if (!container) {
+      throw new Error('找不到 noVNC 容器元素，请刷新页面重试')
+    }
+    
+    // 创建 noVNC 连接
+    rfb.value = new RFB(container, wsUrl, {
+      credentials: {
+        password: password
+      },
+      shared: true,
+      repeaterID: ''
+    })
+    
+    // 配置 RFB
+    rfb.value.scaleViewport = true
+    rfb.value.resizeSession = true
+    rfb.value.background = '#000000'
+    rfb.value.qualityLevel = 6
+    rfb.value.compressionLevel = 2
+    
+    // 事件监听
+    rfb.value.addEventListener('connect', () => {
+      consoleLoading.value = false
+      consoleError.value = ''
+      console.log('noVNC 连接成功')
+    })
+    
+    rfb.value.addEventListener('disconnect', (e) => {
+      consoleLoading.value = false
+      const reason = e?.detail?.clean === false && e?.detail?.reason 
+        ? e.detail.reason 
+        : '连接已断开'
+      consoleError.value = reason
+      console.log('noVNC 断开连接:', reason, e?.detail)
+    })
+    
+    rfb.value.addEventListener('credentialsrequired', () => {
+      consoleError.value = '需要密码验证，但密码可能不正确'
+      consoleLoading.value = false
+      console.warn('noVNC 需要密码验证')
+    })
+    
+    rfb.value.addEventListener('securityfailure', (e) => {
+      const reason = e.detail?.reason || '未知错误'
+      consoleError.value = '安全验证失败: ' + reason
+      consoleLoading.value = false
+      console.error('noVNC 安全验证失败:', e.detail)
+    })
+    
+    rfb.value.addEventListener('serverinit', () => {
+      console.log('noVNC 服务器初始化完成')
+    })
+    
+    rfb.value.addEventListener('capabilities', (e) => {
+      console.log('noVNC 服务器能力:', e.detail)
+    })
+    
+  } catch (error) {
+    consoleError.value = error.message || '初始化控制台失败'
+    consoleLoading.value = false
+    console.error('初始化控制台失败:', error)
+  }
+}
+
+const cleanupConsole = () => {
+  if (rfb.value) {
+    try {
+      rfb.value.disconnect()
+      rfb.value = null
+    } catch (e) {
+      console.warn('清理控制台连接时出错:', e)
+    }
+  }
+}
 
 const storages = ref([])
 const storagesLoading = ref(false)
@@ -475,7 +642,7 @@ const isoStorages = ref([])
 const isoList = ref([])
 const isoLoading = ref(false)
 
-const getStatusColor = (status) => {
+ const getStatusColor = (status) => {
   const colorMap = {
     running: 'green',
     stopped: 'red',
@@ -1122,35 +1289,57 @@ watch(
   () => props.visible,
   (val) => {
     if (val) {
-      loadDetail()
-    } else {
-      currentVM.value = null
-      editState.visible = false
-      addState.visible = false
-    }
+       loadDetail()
+     } else {
+       currentVM.value = null
+       editState.visible = false
+       addState.visible = false
+       cleanupConsole()
+     }
   }
 )
 
 watch(
   () => props.vmId,
-  (val, oldVal) => {
-    if (props.visible && val !== oldVal) {
-      loadDetail()
+   (val, oldVal) => {
+     if (props.visible && val !== oldVal) {
+       loadDetail()
+      if (detailActiveTab.value === 'console') {
+        initConsole()
+      }
+     }
+   }
+ )
+
+watch(
+  () => detailActiveTab.value,
+  async (tab) => {
+    if (tab === 'console') {
+      // 等待 DOM 更新后再初始化
+      await nextTick()
+      // 再延迟一点确保容器元素已完全渲染
+      setTimeout(() => {
+        initConsole()
+      }, 50)
+    } else {
+      cleanupConsole()
     }
   }
 )
 
-onMounted(() => {
-  updateDetailWidth()
-  window.addEventListener('resize', updateDetailWidth)
-  if (props.visible) {
-    loadDetail()
-  }
-})
+ onMounted(() => {
+   updateDetailWidth()
+   window.addEventListener('resize', updateDetailWidth)
+   if (props.visible) {
+     loadDetail()
+   }
+ })
 
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateDetailWidth)
-})
+ onBeforeUnmount(() => {
+   cleanupConsole()
+   window.removeEventListener('resize', updateDetailWidth)
+   window.removeEventListener('resize', updateDetailWidth)
+ })
 </script>
 
 <style scoped>
@@ -1210,6 +1399,77 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+.novnc-wrapper {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+.novnc-container {
+  width: 100%;
+  min-height: 480px;
+  height: 600px;
+  position: relative;
+  background: #000;
+}
+
+.novnc-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.novnc-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-3);
+  text-align: center;
+}
+
+.novnc-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.pve-console-wrapper {
+  width: 100%;
+  min-height: 480px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 8px;
+  background: #000;
+  overflow: hidden;
+  position: relative;
+}
+
+.novnc-container {
+  width: 100%;
+  height: 600px;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+.novnc-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.pve-console-iframe {
+  width: 100%;
+  height: 480px;
+  border: 0;
+  background: #000;
 }
 </style>
 

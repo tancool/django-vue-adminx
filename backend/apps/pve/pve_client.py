@@ -144,6 +144,16 @@ class PVEAPIClient:
         """获取虚拟机配置。"""
         return self._request('GET', f'/nodes/{node}/qemu/{vmid}/config')
     
+    def create_vnc_proxy(self, node: str, vmid: int, websocket: bool = True, generate_password: bool = True) -> Dict:
+        """
+        创建VNC代理会话，用于noVNC连接。
+        """
+        params = {
+            'websocket': 1 if websocket else 0,
+            'generate-password': 1 if generate_password else 0
+        }
+        return self._request('POST', f'/nodes/{node}/qemu/{vmid}/vncproxy', params=params)
+    
     def update_vm_config(self, node: str, vmid: int, params: Dict) -> Dict:
         """
         更新虚拟机硬件配置。

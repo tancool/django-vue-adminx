@@ -1,6 +1,11 @@
 """PVE模块视图集。"""
 
+import json
 import logging
+import secrets
+import mimetypes
+from pathlib import Path
+from urllib.parse import quote_plus
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,6 +15,14 @@ from django.db import transaction
 
 from apps.common.viewsets import ActionSerializerMixin
 from apps.common.mixins import AuditOwnerPopulateMixin
+from django.core.cache import cache
+from django.conf import settings
+from django.http import HttpResponseBadRequest, HttpResponseNotFound, FileResponse, Http404
+from django.template.response import TemplateResponse
+from django.contrib.auth.decorators import login_required
+from django.utils._os import safe_join
+from django.urls import reverse
+
 from .models import PVEServer, VirtualMachine
 from .serializers import (
     PVEServerListSerializer,
@@ -24,8 +37,11 @@ from .serializers import (
     VirtualMachineHardwareUpdateSerializer,
 )
 from .pve_client import PVEAPIClient
+from .consumers import SESSION_CACHE_PREFIX
 
 logger = logging.getLogger(__name__)
+PVE_CONSOLE_SESSION_TTL = getattr(settings, 'PVE_CONSOLE_SESSION_TTL', 60)
+NOVNC_ASSETS_DIR = Path(__file__).resolve().parents[2] / 'templates' / 'novnc-pve'
 
 
 class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.ModelViewSet):
@@ -462,6 +478,84 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
                 'detail': f'更新虚拟机硬件配置失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['post'], url_path='console-session')
+    def console_session(self, request, pk=None):
+        """创建noVNC会话，返回WebSocket连接信息。"""
+        vm = self.get_object()
+        session_type = request.data.get('type', 'novnc')
+        if session_type != 'novnc':
+            return Response({
+                'detail': '当前仅支持 noVNC 会话'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            server = vm.server
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            proxy = client.create_vnc_proxy(vm.node, vm.vmid, websocket=True)
+            port = proxy.get('port')
+            ticket = proxy.get('ticket')
+            password = proxy.get('password')
+            cert = proxy.get('cert')
+            
+            if not port or not ticket:
+                raise Exception('PVE未返回有效的VNC代理信息')
+            
+            encoded_ticket = quote_plus(ticket)
+            websocket_url = (
+                f"wss://{server.host}:{server.port}/api2/json/nodes/{vm.node}/qemu/{vm.vmid}/"
+                f"vncwebsocket?port={port}&vncticket={encoded_ticket}"
+            )
+            
+            session_token = secrets.token_urlsafe(32)
+            proxy_path = f"/ws/pve/console/{vm.id}/?token={session_token}"
+            cache_key = f"{SESSION_CACHE_PREFIX}{session_token}"
+            cache.set(cache_key, {
+                'websocket_url': websocket_url,
+                'ticket': ticket,
+                'port': port,
+                'password': password,
+                'vmid': vm.vmid,
+                'vm_pk': vm.pk,
+                'node': vm.node,
+                'server_id': server.id,
+                'vm_name': vm.name,
+                'console_type': 'kvm',
+                'proxy_path': proxy_path,
+                'origin': f"https://{server.host}:{server.port}",
+            }, timeout=PVE_CONSOLE_SESSION_TTL)
+            proxy_scheme = 'wss' if request.is_secure() else 'ws'
+            proxy_url = f"{proxy_scheme}://{request.get_host()}{proxy_path}"
+            
+            return Response({
+                'websocket_url': websocket_url,
+                'ticket': ticket,
+                'password': password,
+                'port': port,
+                'node': vm.node,
+                'vmid': vm.vmid,
+                'cert': cert,
+                'proxy_path': proxy_path,
+                'proxy_url': proxy_url,
+                'session_token': session_token,
+                'server': {
+                    'host': server.host,
+                    'port': server.port,
+                    'verify_ssl': server.verify_ssl
+                }
+            })
+        except Exception as e:
+            logger.exception('创建noVNC会话失败')
+            return Response({
+                'detail': f'创建控制台会话失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=True, methods=['get'])
     def sync_status(self, request, pk=None):
         """同步虚拟机状态。"""
@@ -506,3 +600,84 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
             return Response({
                 'detail': f'同步状态失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@login_required
+def console_iframe_view(request):
+    """内嵌noVNC的简单页面，由前端iframe加载。"""
+    token = request.GET.get('token')
+    if not token:
+        return HttpResponseBadRequest('缺少token参数')
+    
+    cache_key = f"{SESSION_CACHE_PREFIX}{token}"
+    session = cache.get(cache_key)
+    if not session:
+        return HttpResponseNotFound('控制台会话已过期，请重新打开')
+    
+    vm_pk = session.get('vm_pk')
+    vm = None
+    if vm_pk:
+        vm = VirtualMachine.objects.filter(pk=vm_pk).select_related('server').first()
+    if not vm:
+        return HttpResponseBadRequest('找不到对应的虚拟机记录')
+    
+    vmid = session.get('vmid') or vm.vmid
+    proxy_path = session.get('proxy_path') or f"/ws/pve/console/{vm.pk}/?token={token}"
+    scheme = 'wss' if request.is_secure() else 'ws'
+    proxy_ws_url = f"{scheme}://{request.get_host()}{proxy_path}"
+    
+    asset_placeholder = reverse('pve-console-asset', args=['__asset__'])
+    asset_base = request.build_absolute_uri(asset_placeholder).rsplit('__asset__', 1)[0]
+    
+    console_config = {
+        'ws_url': proxy_ws_url,
+        'ws_path': proxy_path,
+        'password': session.get('password', ''),
+        'vmid': vmid,
+        'vm_name': vm.name or '',
+        'node': vm.node or '',
+        'server_name': vm.server.name if vm.server else '',
+        'console_type': session.get('console_type', 'kvm'),
+        'auto_connect': True,
+        'disable_commands': True,
+    }
+    
+    context = {
+        'ws_url': proxy_ws_url,
+        'ws_path': proxy_path,
+        'password': session.get('password', ''),
+        'vmid': vmid,
+        'vm_name': vm.name or '',
+        'node': vm.node or '',
+        'server_name': vm.server.name if vm.server else '',
+        'console_type': session.get('console_type', 'kvm'),
+        'asset_base': asset_base.rstrip('/'),
+        'novnc_version': '1.6.0-2',
+        'session_token': token,
+        'console_config': json.dumps(console_config),
+    }
+    response = TemplateResponse(request, 'pve/console_iframe.html', context)
+    response["X-Frame-Options"] = "ALLOWALL"
+    response["Cross-Origin-Embedder-Policy"] = "unsafe-none"
+    return response
+
+
+def console_asset_view(request, path):
+    """提供noVNC静态资源。"""
+    normalized = path.strip('/')
+    if not normalized:
+        raise Http404("Invalid asset path")
+    try:
+        full_path = safe_join(str(NOVNC_ASSETS_DIR), normalized)
+    except ValueError:
+        raise Http404("Invalid asset path")
+
+    target = Path(full_path)
+    if not target.exists() or not target.is_file():
+        raise Http404("Asset not found")
+
+    mime, _ = mimetypes.guess_type(str(target))
+    response = FileResponse(target.open('rb'), content_type=mime or 'application/octet-stream')
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response

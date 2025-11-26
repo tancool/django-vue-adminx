@@ -8,6 +8,7 @@
     "build:widget": "vite build --config vite.widget.config.ts"
   },
   "dependencies": {
+    "@novnc/novnc": "^1.4.0",
     "@wangeditor/editor": "^5.1.23",
     "@wangeditor/editor-for-vue": "^5.1.12",
     "axios": "^1.12.2",

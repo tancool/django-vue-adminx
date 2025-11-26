@@ -82,6 +82,8 @@ class VirtualMachineDetailSerializer(BaseModelSerializer):
     """虚拟机详情序列化器。"""
     
     server_name = serializers.CharField(source='server.name', read_only=True)
+    server_host = serializers.CharField(source='server.host', read_only=True)
+    server_port = serializers.IntegerField(source='server.port', read_only=True)
     
     class Meta:
         model = VirtualMachine

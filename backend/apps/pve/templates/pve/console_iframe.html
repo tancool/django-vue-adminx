@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="noVNC_loading">
+<head>
+    <meta charset="UTF-8" />
+    <title>{{ node }} - Proxmox Console</title>
+    <meta name="theme-color" content="#313131">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="{{ asset_base }}/app/styles/constants.css?ver=1.6.0-2">
+    <link rel="stylesheet" href="{{ asset_base }}/app/styles/base.css?ver=1.6.0-2">
+    <link rel="stylesheet" href="{{ asset_base }}/app/styles/input.css?ver=1.6.0-2">
+    <link rel="stylesheet" href="{{ asset_base }}/app/styles/pve.css?ver=1.6.0-2" />
+    
+    <!-- Images that will later appear via CSS -->
+    <link rel="preload" as="image" href="{{ asset_base }}/app/images/info.svg">
+    <link rel="preload" as="image" href="{{ asset_base }}/app/images/error.svg">
+    <link rel="preload" as="image" href="{{ asset_base }}/app/images/warning.svg">
+    
+    <script type="module" crossorigin="anonymous" src="{{ asset_base }}/app/error-handler.js?ver=1.6.0-2"></script>
+    <script type="text/javascript">
+        if (typeof(PVE) === 'undefined') PVE = {};
+        PVE.UserName = '{{ request.user.username|default:"-" }}';
+        PVE.CSRFPreventionToken = '{{ session_token }}';
+        INCLUDE_URI = '{{ asset_base }}/include';
+        
+        // 覆盖 PVE 的 API 调用，直接使用我们的 WebSocket 代理
+        window.__PVE_CONSOLE_CONFIG__ = {
+            ws_url: "{{ ws_url|escapejs }}",
+            ws_path: "{{ ws_path|escapejs }}",
+            password: "{{ password|default_if_none:''|escapejs }}",
+            vmid: {{ vmid }},
+            node: "{{ node|escapejs }}",
+            vm_name: "{{ vm_name|escapejs }}",
+            console_type: "{{ console_type|default:'kvm'|escapejs }}",
+            auto_connect: true
+        };
+        
+        // 修复 app.js 中硬编码的 /novnc/ 路径
+        window.__NOVNC_ASSET_BASE__ = '{{ asset_base }}';
+        
+        // 拦截 fetch 请求，将 /novnc/ 路径替换为我们的 asset_base
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            if (typeof args[0] === 'string' && args[0].startsWith('/novnc/')) {
+                args[0] = args[0].replace('/novnc/', window.__NOVNC_ASSET_BASE__ + '/');
+            }
+            return originalFetch.apply(this, args);
+        };
+    </script>
+    <script type="module">
+        import UI from "{{ asset_base }}/app.js?ver=1.6.0-2";
+        
+        const config = window.__PVE_CONSOLE_CONFIG__;
+        const assetBase = window.__NOVNC_ASSET_BASE__;
+        
+        // 设置 URL 查询参数，让 PVEUI 能正确初始化
+        if (config) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('console', config.console_type || 'kvm');
+            url.searchParams.set('vmid', config.vmid);
+            url.searchParams.set('vmname', config.vm_name || '');
+            url.searchParams.set('node', config.node || '');
+            url.searchParams.set('novnc', '1');
+            window.history.replaceState({}, '', url);
+        }
+        
+        // 覆盖 UI.start 以在启动后修改 PVE 行为
+        const originalStart = UI.start;
+        UI.start = async function(options) {
+            try {
+                // 设置强制连接参数
+                options = options || { settings: { defaults: {}, mandatory: {} } };
+                options.settings = options.settings || { defaults: {}, mandatory: {} };
+                options.settings.defaults = options.settings.defaults || {};
+                options.settings.mandatory = options.settings.mandatory || {};
+                
+                if (config && config.auto_connect) {
+                    // 强制使用我们的 WebSocket 路径（相对路径）
+                    const wsPath = config.ws_path.startsWith('/') ? config.ws_path : '/' + config.ws_path;
+                    options.settings.mandatory.path = wsPath;
+                    options.settings.mandatory.autoconnect = "true";
+                    if (config.password) {
+                        options.settings.defaults.password = config.password;
+                    }
+                }
+                
+                // fetch 拦截器已经在全局设置，会自动处理 /novnc/ 路径
+                // 调用原始 start
+                const result = await originalStart.call(this, options);
+                
+                // 在 UI.PVE 创建后覆盖其方法
+                if (config && UI.PVE) {
+                    // 覆盖 initConnection 方法，跳过 PVE API 调用
+                    UI.PVE.initConnection = function(callback) {
+                        if (config.ws_path) {
+                            // 直接设置路径和密码，跳过 API 调用
+                            const wsPath = config.ws_path.startsWith('/') ? config.ws_path : '/' + config.ws_path;
+                            this.UI.reconnectPassword = config.password || "";
+                            this.UI.forceSetting("path", wsPath);
+                            if (callback) {
+                                callback(config.password || "");
+                            }
+                        } else if (callback) {
+                            callback("");
+                        }
+                    };
+                    
+                    // 覆盖 pveStart，直接调用 initConnection，跳过状态检查
+                    UI.PVE.pveStart = function(callback) {
+                        if (config.ws_path) {
+                            this.initConnection(callback);
+                        } else if (callback) {
+                            callback("");
+                        }
+                    };
+                }
+                
+                return result;
+            } catch (error) {
+                console.error('noVNC initialization error:', error);
+                const errorDiv = document.getElementById('noVNC_fallback_error');
+                const errorMsg = document.getElementById('noVNC_fallback_errormsg');
+                if (errorDiv) {
+                    errorDiv.style.display = 'flex';
+                }
+                if (errorMsg) {
+                    errorMsg.textContent = error.message || String(error) + '\n\nStack: ' + (error.stack || '');
+                }
+                document.documentElement.classList.remove("noVNC_loading");
+                throw error;
+            }
+        };
+        
+        // 全局错误处理
+        window.addEventListener('error', function(event) {
+            console.error('Global error:', event.error);
+            const errorDiv = document.getElementById('noVNC_fallback_error');
+            const errorMsg = document.getElementById('noVNC_fallback_errormsg');
+            if (errorDiv) {
+                errorDiv.style.display = 'flex';
+            }
+            if (errorMsg) {
+                const err = event.error || event;
+                errorMsg.textContent = (err.message || event.message || 'Unknown error') + '\n\nStack: ' + (err.stack || event.filename || '');
+            }
+            document.documentElement.classList.remove("noVNC_loading");
+        });
+        
+        UI.start({ settings: { defaults: {}, mandatory: {} } }).catch(function(error) {
+            console.error('Failed to start noVNC:', error);
+            const errorDiv = document.getElementById('noVNC_fallback_error');
+            const errorMsg = document.getElementById('noVNC_fallback_errormsg');
+            if (errorDiv) {
+                errorDiv.style.display = 'flex';
+            }
+            if (errorMsg) {
+                errorMsg.textContent = (error.message || String(error)) + '\n\nStack: ' + (error.stack || '');
+            }
+            document.documentElement.classList.remove("noVNC_loading");
+        });
+    </script>
+</head>
+<body>
+    <div id="noVNC_fallback_error" class="noVNC_center" style="display: none;">
+        <div>
+            <div style="color: #ff6b6b; font-weight: bold; margin-bottom: 10px;">noVNC encountered an error:</div>
+            <div id="noVNC_fallback_errormsg" style="color: #fff; background: #333; padding: 10px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all;"></div>
+            <div style="margin-top: 20px;">
+                <button onclick="location.reload()" style="padding: 8px 16px; background: #4a90e2; color: #fff; border: none; border-radius: 4px; cursor: pointer;">重新加载</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- noVNC control bar -->
+    <div id="noVNC_control_bar_anchor" class="noVNC_vcenter">
+        <div id="noVNC_control_bar">
+            <div id="noVNC_control_bar_handle" title="Hide/Show the control bar"><div></div></div>
+            
+            <div class="noVNC_scroll">
+                <h1 class="noVNC_logo" translate="no"><span>no</span><br>VNC</h1>
+                <hr>
+                
+                <!-- Drag/Pan the viewport -->
+                <input type="image" alt="Drag" src="{{ asset_base }}/app/images/drag.svg"
+                    id="noVNC_view_drag_button" class="noVNC_button noVNC_hidden"
+                    title="Move/Drag viewport">
+                
+                <!--noVNC touch device only buttons-->
+                <div id="noVNC_mobile_buttons">
+                    <input type="image" alt="Keyboard" src="{{ asset_base }}/app/images/keyboard.svg"
+                        id="noVNC_keyboard_button" class="noVNC_button" title="Show keyboard">
+                </div>
+                
+                <!-- Extra manual keys -->
+                <input type="image" alt="Extra keys" src="{{ asset_base }}/app/images/toggleextrakeys.svg"
+                    id="noVNC_toggle_extra_keys_button" class="noVNC_button"
+                    title="Show extra keys">
+                <div class="noVNC_vcenter">
+                    <div id="noVNC_modifiers" class="noVNC_panel">
+                        <input type="image" alt="Ctrl" src="{{ asset_base }}/app/images/ctrl.svg"
+                            id="noVNC_toggle_ctrl_button" class="noVNC_button"
+                            title="Toggle Ctrl">
+                        <input type="image" alt="Alt" src="{{ asset_base }}/app/images/alt.svg"
+                            id="noVNC_toggle_alt_button" class="noVNC_button"
+                            title="Toggle Alt">
+                        <input type="image" alt="Windows" src="{{ asset_base }}/app/images/windows.svg"
+                            id="noVNC_toggle_windows_button" class="noVNC_button"
+                            title="Toggle Windows">
+                        <input type="image" alt="Tab" src="{{ asset_base }}/app/images/tab.svg"
+                            id="noVNC_send_tab_button" class="noVNC_button"
+                            title="Send Tab">
+                        <input type="image" alt="Esc" src="{{ asset_base }}/app/images/esc.svg"
+                            id="noVNC_send_esc_button" class="noVNC_button"
+                            title="Send Escape">
+                        <input type="image" alt="Ctrl+Alt+Del" src="{{ asset_base }}/app/images/ctrlaltdel.svg"
+                            id="noVNC_send_ctrl_alt_del_button" class="noVNC_button"
+                            title="Send Ctrl-Alt-Del">
+                    </div>
+                </div>
+                
+                <!-- Shutdown/Reboot -->
+                <input type="image" alt="Shutdown/Reboot" src="{{ asset_base }}/app/images/power.svg"
+                    id="noVNC_power_button" class="noVNC_button"
+                    title="Shutdown/Reboot...">
+                <div class="noVNC_vcenter">
+                    <div id="noVNC_power" class="noVNC_panel">
+                        <div class="noVNC_heading">
+                            <img alt="" src="{{ asset_base }}/app/images/power.svg"> Power
+                        </div>
+                        <input type="button" id="noVNC_shutdown_button" value="Shutdown">
+                        <input type="button" id="noVNC_reboot_button" value="Reboot">
+                        <input type="button" id="noVNC_reset_button" value="Reset">
+                    </div>
+                </div>
+                
+                <!-- Clipboard -->
+                <input type="image" alt="Clipboard" src="{{ asset_base }}/app/images/clipboard.svg"
+                    id="noVNC_clipboard_button" class="noVNC_button"
+                    title="Clipboard">
+                <div class="noVNC_vcenter">
+                    <div id="noVNC_clipboard" class="noVNC_panel">
+                        <div class="noVNC_heading">
+                            <img alt="" src="{{ asset_base }}/app/images/clipboard.svg"> Clipboard
+                        </div>
+                        <p class="noVNC_subheading">
+                            Edit clipboard content in the textarea below.
+                        </p>
+                        <textarea id="noVNC_clipboard_text" rows=5></textarea>
+                    </div>
+                </div>
+                
+                <!-- Toggle fullscreen -->
+                <input type="image" alt="Full screen" src="{{ asset_base }}/app/images/fullscreen.svg"
+                    id="noVNC_fullscreen_button" class="noVNC_button noVNC_hidden"
+                    title="Full screen">
+                
+                <!-- Settings -->
+                <input type="image" alt="Settings" src="{{ asset_base }}/app/images/settings.svg"
+                    id="noVNC_settings_button" class="noVNC_button"
+                    title="Settings">
+                <div class="noVNC_vcenter">
+                    <div id="noVNC_settings" class="noVNC_panel">
+                        <div class="noVNC_heading">
+                            <img alt="" src="{{ asset_base }}/app/images/settings.svg"> Settings
+                        </div>
+                        <ul>
+                            <li style="display:none;">
+                                <label>
+                                    <input id="noVNC_setting_shared" type="checkbox"
+                                           class="toggle">
+                                    Shared mode
+                                </label>
+                            </li>
+                            <li>
+                                <label>
+                                    <input id="noVNC_setting_view_only" type="checkbox"
+                                           class="toggle">
+                                    View only
+                                </label>
+                            </li>
+                            <li><hr></li>
+                            <li>
+                                <label>
+                                    <input id="noVNC_setting_view_clip" type="checkbox"
+                                           class="toggle">
+                                    Clip to window
+                                </label>
+                            </li>
+                            <li>
+                                <label>
+                                    <input id="noVNC_setting_local_cursor" type="checkbox"
+                                            class="toggle">
+                                    Local Cursor
+                                </label>
+                            </li>
+                            <li>
+                                <label>
+                                    <input id="noVNC_setting_autoresize" type="checkbox"
+                                           class="toggle">
+                                    Autoresize Window
+                                </label>
+                            </li>
+                            <li>
+                                <label for="noVNC_setting_resize">Scaling mode:</label>
+                                <select id="noVNC_setting_resize" name="vncResize">
+                                    <option value="off">None</option>
+                                    <option value="scale">Local scaling</option>
+                                    <option value="remote">Remote resizing</option>
+                                </select>
+                            </li>
+                            <li style="display:none;">
+                                <div class="noVNC_expander">Advanced</div>
+                                <div><ul>
+                                    <li>
+                                        <label for="noVNC_setting_quality">Quality:</label>
+                                        <input id="noVNC_setting_quality" type="range" min="0" max="9" value="6">
+                                    </li>
+                                    <li>
+                                        <label for="noVNC_setting_compression">Compression level:</label>
+                                        <input id="noVNC_setting_compression" type="range" min="0" max="9" value="2">
+                                    </li>
+                                </ul></div>
+                            </li>
+                            <li><hr></li>
+                            <li>
+                                <label>Logging:
+                                    <select id="noVNC_setting_logging" name="vncLogging">
+                                    </select>
+                                </label>
+                            </li>
+                            <li class="noVNC_version_separator"><hr></li>
+                            <li class="noVNC_version_wrapper">
+                                <span>Version:</span>
+                                <span class="noVNC_version"></span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- PVE Commands (隐藏，因为我们不直接调用PVE API) -->
+                <input type="image" alt="Commands" src="{{ asset_base }}/app/images/power.svg"
+                    id="pve_commands_button" class="noVNC_button pve_hidden"
+                    title="Commands" />
+                
+                <div class="noVNC_vcenter">
+                    <div id="pve_commands" class="noVNC_panel">
+                        <div class="noVNC_heading">
+                            <img src="{{ asset_base }}/app/images/power.svg"> Commands
+                        </div>
+                        <input id="pve_command_start" type="button" value="Start" />
+                        <input id="pve_command_shutdown" type="button" value="Shutdown" />
+                        <input id="pve_command_stop" type="button" value="Hard Stop" />
+                        <input id="pve_command_reset" type="button" value="Hard Reset" />
+                        <input id="pve_command_suspend" type="button" value="Suspend" />
+                        <input id="pve_command_resume" type="button" value="Resume" />
+                        <input id="pve_command_reload" type="button" value="Reload noVNC" />
+                    </div>
+                </div>
+                
+                <!-- Connection controls -->
+                <input type="image" alt="Disconnect" src="{{ asset_base }}/app/images/disconnect.svg"
+                    id="noVNC_disconnect_button" class="noVNC_button"
+                    title="Disconnect">
+            </div>
+        </div>
+    </div> <!-- End of noVNC_control_bar -->
+    
+    <div id="noVNC_hint_anchor" class="noVNC_vcenter">
+        <div id="noVNC_control_bar_hint">
+        </div>
+    </div>
+    
+    <!-- Status dialog -->
+    <div id="noVNC_status"></div>
+    
+    <!-- Connect button -->
+    <div class="noVNC_center">
+        <div id="noVNC_connect_dlg">
+            <p class="noVNC_logo" translate="no"><span>no</span>VNC</p>
+            <div>
+                <button id="noVNC_connect_button">
+                    <img alt="" src="{{ asset_base }}/app/images/connect.svg"> Connect
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Server key verification dialog -->
+    <div class="noVNC_center noVNC_connect_layer">
+        <div id="noVNC_verify_server_dlg" class="noVNC_panel"><form>
+            <div class="noVNC_heading">
+                Server identity
+            </div>
+            <div>
+                The server has provided the following identifying information:
+            </div>
+            <div id="noVNC_fingerprint_block">
+                Fingerprint:
+                <span id="noVNC_fingerprint"></span>
+            </div>
+            <div>
+                Please verify that the information is correct and press
+                "Approve". Otherwise press "Reject".
+            </div>
+            <div class="button_row">
+                <input id="noVNC_approve_server_button" type="submit" value="Approve">
+                <input id="noVNC_reject_server_button" type="button" value="Reject">
+            </div>
+        </form></div>
+    </div>
+    
+    <div class="noVNC_center">
+        <div id="pve_start_dlg">
+            <div id="pve_start_info">Guest not running</div>
+            <div id="pve_start_button"><div>
+                <img alt="" src="{{ asset_base }}/app/images/power.svg"> Start Now
+            </div></div>
+        </div>
+    </div>
+    
+    <!-- Password dialog -->
+    <div class="noVNC_center noVNC_connect_layer">
+        <div id="noVNC_credentials_dlg" class="noVNC_panel"><form>
+            <div class="noVNC_heading">
+                Credentials
+            </div>
+            <div id="noVNC_username_block">
+                <label for="noVNC_username_input">Username:</label>
+                <input id="noVNC_username_input">
+            </div>
+            <div id="noVNC_password_block">
+                <label for="noVNC_password_input">Password:</label>
+                <input id="noVNC_password_input" type="password">
+            </div>
+            <div class="button_row">
+                <input id="noVNC_credentials_button" type="submit" value="Send credentials">
+            </div>
+        </form></div>
+    </div>
+    
+    <!-- Transition screens -->
+    <div id="noVNC_transition">
+        <div id="noVNC_transition_text"></div>
+        <div>
+        <input type="button" id="noVNC_cancel_reconnect_button" value="Cancel">
+        </div>
+        <div class="noVNC_spinner"></div>
+    </div>
+    
+    <!-- This is where the RFB elements will attach -->
+    <div id="noVNC_container">
+        <!-- Note that Google Chrome on Android doesn't respect any of these,
+             html attributes which attempt to disable text suggestions on the
+             on-screen keyboard. Let's hope Chrome implements the ime-mode
+             style for example -->
+        <textarea id="noVNC_keyboardinput" autocapitalize="off"
+            autocomplete="off" spellcheck="false" tabindex="-1"></textarea>
+    </div>
+    
+    <audio id="noVNC_bell">
+        <source src="{{ asset_base }}/app/sounds/bell.oga" type="audio/ogg">
+        <source src="{{ asset_base }}/app/sounds/bell.mp3" type="audio/mpeg">
+    </audio>
+</body>
+</html>
