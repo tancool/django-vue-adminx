@@ -52,6 +52,12 @@
               :vm-id="vmId"
             />
           </a-tab-pane>
+          <a-tab-pane key="tasks" title="任务历史">
+            <VMTasksTab
+              :vm="currentVM"
+              :vm-id="vmId"
+            />
+          </a-tab-pane>
           <a-tab-pane key="config" title="配置">
             <VMConfigTab :vm="currentVM" />
           </a-tab-pane>
@@ -72,6 +78,7 @@ import VMHardwareTab from './VMHardwareTab.vue'
 import VMConfigTab from './VMConfigTab.vue'
 import VMBackupTab from './VMBackupTab.vue'
 import VMSnapshotTab from './VMSnapshotTab.vue'
+import VMTasksTab from './VMTasksTab.vue'
 
 const props = defineProps({
   visible: {

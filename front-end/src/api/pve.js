@@ -262,3 +262,25 @@ export function deleteVMSnapshot(id, data) {
   })
 }
 
+/**
+ * 获取虚拟机任务历史
+ */
+export function getVMTasks(id, params) {
+  return request({
+    url: `/api/pve/virtual-machines/${id}/tasks/`,
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 获取任务日志
+ */
+export function getVMTaskLog(id, data) {
+  return request({
+    url: `/api/pve/virtual-machines/${id}/task-log/`,
+    method: 'post',
+    data
+  })
+}
+

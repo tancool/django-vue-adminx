@@ -331,3 +331,40 @@ class PVEAPIClient:
             params['notes'] = notes
         return self._request('POST', f'/nodes/{node}/vzdump', params=params)
 
+    def list_tasks(self, node: str, vmid: int = None, limit: int = 100) -> List[Dict]:
+        """
+        获取节点上的任务列表，可选过滤特定虚拟机。
+        
+        Args:
+            node: 节点名称
+            vmid: 可选，虚拟机ID（过滤该虚拟机相关任务）
+            limit: 返回的任务数量限制
+        """
+        params = {
+            'limit': limit
+        }
+        if vmid:
+            params['vmid'] = vmid
+        result = self._request('GET', f'/nodes/{node}/tasks', params=params)
+        return result if isinstance(result, list) else [result] if result else []
+
+    def get_task_log(self, node: str, upid: str, start: int = 0, limit: int = 50) -> List[str]:
+        """
+        获取任务日志。
+        
+        Args:
+            node: 节点名称
+            upid: 任务UPID
+            start: 起始行号
+            limit: 返回的日志行数
+        """
+        params = {
+            'start': start,
+            'limit': limit
+        }
+        result = self._request('GET', f'/nodes/{node}/tasks/{upid}/log', params=params)
+        if isinstance(result, list):
+            # PVE 返回格式：[{"n": 行号, "t": "日志内容"}, ...]
+            return [item.get('t', '') for item in result if isinstance(item, dict)]
+        return []
+

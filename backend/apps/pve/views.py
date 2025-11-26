@@ -793,6 +793,86 @@ class VirtualMachineViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, view
             }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['get'])
+    def tasks(self, request, pk=None):
+        """获取虚拟机任务历史列表。"""
+        vm = self.get_object()
+        try:
+            server = vm.server
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            limit = int(request.query_params.get('limit', 100))
+            tasks = client.list_tasks(vm.node, vmid=vm.vmid, limit=limit)
+            
+            # 过滤与当前虚拟机相关的任务（再次确认）
+            filtered_tasks = []
+            for task in tasks:
+                # PVE 任务 ID 格式通常包含 vmid，但为了更精确，检查 upid
+                upid = task.get('upid', '')
+                task_type = task.get('type', '')
+                
+                # 检查任务是否与当前 VM 相关
+                # upid 格式: UPID:node:pid:pstart:task_id:type:vmid:user@realm:
+                if str(vm.vmid) in upid or task_type in ['qmstart', 'qmstop', 'qmshutdown', 'qmreboot', 'qmrestore', 'vzdump', 'qmsnapshot']:
+                    filtered_tasks.append({
+                        'upid': upid,
+                        'type': task_type,
+                        'status': task.get('status', 'unknown'),
+                        'starttime': task.get('starttime'),
+                        'endtime': task.get('endtime'),
+                        'user': task.get('user'),
+                        'node': task.get('node'),
+                        'pid': task.get('pid'),
+                        'pstart': task.get('pstart'),
+                        'id': task.get('id')
+                    })
+            
+            return Response({'tasks': filtered_tasks})
+        except Exception as e:
+            logger.exception('获取任务列表失败')
+            return Response({
+                'detail': f'获取任务列表失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='task-log')
+    def task_log(self, request, pk=None):
+        """获取任务日志。"""
+        vm = self.get_object()
+        upid = request.data.get('upid')
+        if not upid:
+            return Response({
+                'detail': '缺少 upid 参数'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            server = vm.server
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            start = int(request.data.get('start', 0))
+            limit = int(request.data.get('limit', 200))
+            log_lines = client.get_task_log(vm.node, upid, start=start, limit=limit)
+            
+            return Response({
+                'log': log_lines,
+                'start': start,
+                'total': len(log_lines)
+            })
+        except Exception as e:
+            logger.exception('获取任务日志失败')
+            return Response({
+                'detail': f'获取任务日志失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
     def sync_status(self, request, pk=None):
         """同步虚拟机状态。"""
         vm = self.get_object()
