@@ -98,13 +98,33 @@ export function getNodeStorage(serverId, node) {
 }
 
 /**
- * 获取存储中的ISO镜像列表
+ * 获取存储内容列表（按类型可选）
+ */
+export function getStorageContent(serverId, node, storage, params) {
+  return request({
+    url: `/api/pve/servers/${serverId}/nodes/${node}/storage/${storage}/content/`,
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 上传文件到存储
+ */
+export function uploadStorageContent(serverId, node, storage, data) {
+  return request({
+    url: `/api/pve/servers/${serverId}/nodes/${node}/storage/${storage}/upload/`,
+    method: 'post',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+/**
+ * 获取存储中的ISO镜像列表（兼容旧接口）
  */
 export function getStorageISO(serverId, node, storage) {
-  return request({
-    url: `/api/pve/servers/${serverId}/nodes/${node}/storage/${storage}/iso/`,
-    method: 'get'
-  })
+  return getStorageContent(serverId, node, storage, { content: 'iso' })
 }
 
 /**

@@ -157,9 +157,33 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
                 'detail': f'获取存储列表失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/storage/(?P<storage>[^/.]+)/content')
+    def node_storage_content(self, request, pk=None, node=None, storage=None):
+        """获取存储中的内容列表，可按类型过滤。"""
+        server = self.get_object()
+        content_type = request.query_params.get('content')
+        if content_type and content_type.lower() in ('all', 'none'):
+            content_type = None
+        
+        try:
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            content = client.get_storage_content(node, storage, content_type=content_type)
+            return Response(content)
+        except Exception as e:
+            return Response({
+                'detail': f'获取存储内容失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
     @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/storage/(?P<storage>[^/.]+)/iso')
     def node_storage_iso(self, request, pk=None, node=None, storage=None):
-        """获取存储中的ISO镜像列表。"""
+        """获取存储中的ISO镜像列表（兼容旧接口）。"""
         server = self.get_object()
         
         try:
@@ -171,14 +195,41 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
                 verify_ssl=server.verify_ssl
             )
             
-            # 获取ISO类型的内容
             content = client.get_storage_content(node, storage, content_type='iso')
-            # 过滤出ISO文件
-            iso_files = [item for item in content if item.get('content') == 'iso' and item.get('volid', '').endswith('.iso')]
+            iso_files = [item for item in content if item.get('content') == 'iso']
             return Response(iso_files)
         except Exception as e:
             return Response({
                 'detail': f'获取ISO镜像列表失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'], url_path='nodes/(?P<node>[^/.]+)/storage/(?P<storage>[^/.]+)/upload')
+    def node_storage_upload(self, request, pk=None, node=None, storage=None):
+        """上传文件到指定存储。"""
+        server = self.get_object()
+        upload_file = request.FILES.get('file')
+        if not upload_file:
+            return Response({'detail': '请上传文件'}, status=status.HTTP_400_BAD_REQUEST)
+        filename = request.data.get('filename') or upload_file.name
+        content_type = request.data.get('content', 'iso')
+        
+        try:
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            result = client.upload_storage_content(node, storage, upload_file, filename, content=content_type or 'iso')
+            return Response({
+                'success': True,
+                'message': '文件上传成功',
+                'result': result
+            })
+        except Exception as e:
+            return Response({
+                'detail': f'上传失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/network')

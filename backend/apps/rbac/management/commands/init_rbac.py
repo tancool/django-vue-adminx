@@ -207,12 +207,16 @@ class Command(BaseCommand):
         perms.append(self._get_or_create_permission('PVE服务器获取节点', 'pve_server:nodes', 'GET', r'/api/pve/servers/\\d+/nodes/', menu_pve_server))
         perms.append(self._get_or_create_permission('PVE服务器获取节点虚拟机', 'pve_server:node_vms', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/vms/', menu_pve_server))
         perms.append(self._get_or_create_permission('PVE服务器获取节点存储', 'pve_server:node_storage', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/', menu_pve_server))
+        perms.append(self._get_or_create_permission('PVE服务器存储内容', 'pve_server:storage_content', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/content/', menu_pve_server))
+        perms.append(self._get_or_create_permission('PVE服务器存储上传', 'pve_server:storage_upload', 'POST', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/upload/', menu_pve_server))
         perms.append(self._get_or_create_permission('PVE服务器存储ISO列表', 'pve_server:storage_iso', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/iso/', menu_pve_server))
         
         # PVE 存储管理权限
         perms.append(self._get_or_create_permission('PVE存储服务器列表', 'pve_storage:servers', 'GET', '/api/pve/servers/', menu_pve_storage))
         perms.append(self._get_or_create_permission('PVE存储节点列表', 'pve_storage:nodes', 'GET', r'/api/pve/servers/\\d+/nodes/', menu_pve_storage))
         perms.append(self._get_or_create_permission('PVE存储节点存储列表', 'pve_storage:node_storage', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/', menu_pve_storage))
+        perms.append(self._get_or_create_permission('PVE存储内容列表', 'pve_storage:storage_content', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/content/', menu_pve_storage))
+        perms.append(self._get_or_create_permission('PVE存储上传', 'pve_storage:storage_upload', 'POST', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/upload/', menu_pve_storage))
         perms.append(self._get_or_create_permission('PVE存储ISO列表', 'pve_storage:storage_iso', 'GET', r'/api/pve/servers/\\d+/nodes/[^/]+/storage/[^/]+/iso/', menu_pve_storage))
         
         # 虚拟机管理权限

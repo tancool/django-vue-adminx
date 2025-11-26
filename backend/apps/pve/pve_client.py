@@ -290,6 +290,52 @@ class PVEAPIClient:
             params['content'] = content_type
         result = self._request('GET', f'/nodes/{node}/storage/{storage}/content', params=params)
         return result if isinstance(result, list) else [result] if result else []
+
+    def upload_storage_content(
+        self,
+        node: str,
+        storage: str,
+        file_obj,
+        filename: str,
+        content: str = 'iso'
+    ) -> Dict:
+        """
+        上传文件到指定存储。
+        """
+        if not file_obj:
+            raise ValueError('缺少上传文件')
+        if not filename:
+            raise ValueError('缺少文件名')
+
+        endpoint = f'/nodes/{node}/storage/{storage}/upload'
+        url = self.base_url.rstrip('/') + endpoint
+        data = {
+            'content': content or 'iso',
+            'filename': filename
+        }
+        if hasattr(file_obj, 'seek'):
+            try:
+                file_obj.seek(0)
+            except Exception:
+                pass
+
+        files = {
+            'filename': (filename, file_obj, 'application/octet-stream')
+        }
+
+        try:
+            response = self.session.post(url, data=data, files=files, timeout=300)
+            if response.status_code >= 400:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('message') or response.text
+                except Exception:
+                    error_msg = response.text or f"HTTP {response.status_code}"
+                raise Exception(f"PVE 上传失败 ({response.status_code}): {error_msg}")
+            result = response.json()
+            return result.get('data') if isinstance(result, dict) else result
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"PVE 上传失败: {str(e)}")
     
     def get_next_vmid(self, vmid: int = None) -> int:
         """

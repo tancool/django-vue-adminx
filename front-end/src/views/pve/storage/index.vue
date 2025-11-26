@@ -114,40 +114,77 @@
         </template>
         <template #actions="{ record }">
           <a-space>
-            <a-button type="text" size="small" @click="openIsoDrawer(record)">查看 ISO</a-button>
+            <a-button type="text" size="small" @click="openContentDrawer(record)">查看内容</a-button>
           </a-space>
         </template>
       </a-table>
     </a-card>
 
     <a-drawer
-      v-model:visible="isoDrawerVisible"
-      :width="520"
+      v-model:visible="contentDrawerVisible"
+      :width="620"
       :mask-closable="false"
-      title="ISO 镜像"
+      title="存储内容"
     >
       <template v-if="currentStorage">
         <div class="drawer-header">
           <div>服务器：{{ currentServerName }}</div>
-          <div>节点：{{ selectedNode }}</div>
+          <div>节点：{{ currentStorage.__node || selectedNode }}</div>
           <div>存储：{{ currentStorage.storage }}</div>
         </div>
+        <div class="drawer-toolbar">
+          <a-radio-group v-model="contentType" type="button" size="small">
+            <a-radio
+              v-for="item in drawerContentTypeOptions"
+              :key="item.value"
+              :value="item.value"
+            >
+              {{ item.label }}
+            </a-radio>
+          </a-radio-group>
+          <a-upload
+            v-if="contentType === 'iso'"
+            :show-file-list="false"
+            :custom-request="handleUpload"
+            :disabled="uploading"
+          >
+            <a-button type="primary" size="small" :loading="uploading">
+              上传 ISO
+            </a-button>
+          </a-upload>
+        </div>
       </template>
-      <a-spin :loading="isoLoading">
+      <a-spin :loading="contentLoading">
         <a-table
-          :data="isoList"
+          v-if="contentList.length"
+          :data="contentList"
           :pagination="false"
           :bordered="false"
           row-key="volid"
           size="small"
         >
           <template #columns>
-            <a-table-column title="镜像" data-index="volid" />
+            <a-table-column title="卷标" data-index="volid" />
+            <a-table-column
+              v-if="contentType === 'all'"
+              title="类型"
+              data-index="content"
+            />
             <a-table-column title="大小" data-index="size">
               <template #cell="{ record }">
                 {{ formatBytes(record.size) }}
               </template>
             </a-table-column>
+            <a-table-column
+              v-if="contentType !== 'iso'"
+              title="格式"
+              data-index="format"
+            />
+            <a-table-column
+              v-if="contentType === 'images' || contentType === 'all'"
+              title="VMID"
+              data-index="vmid"
+            />
             <a-table-column title="更新时间" data-index="ctime">
               <template #cell="{ record }">
                 {{ formatTime(record.ctime) }}
@@ -155,7 +192,7 @@
             </a-table-column>
           </template>
         </a-table>
-        <a-empty v-if="!isoList.length && !isoLoading" description="暂无 ISO 镜像" />
+        <a-empty v-else-if="!contentLoading" description="暂无内容" />
       </a-spin>
     </a-drawer>
   </div>
@@ -169,7 +206,8 @@ import {
   getPVEServers,
   getPVEServerNodes,
   getNodeStorage,
-  getStorageISO
+  getStorageContent,
+  uploadStorageContent
 } from '@/api/pve'
 
 const servers = ref([])
@@ -180,12 +218,19 @@ const serverOptions = computed(() =>
   }))
 )
 const nodes = ref([])
-const nodeOptions = computed(() =>
-  nodes.value.map(node => ({
-    label: node.node || node.name,
-    value: node.node || node.name
-  }))
-)
+const ALL_NODES_VALUE = '__ALL_NODES__'
+const nodeOptions = computed(() => {
+  const options = nodes.value
+    .map(node => ({
+      label: node.node || node.name,
+      value: node.node || node.name
+    }))
+    .filter(option => option.value)
+  if (options.length) {
+    return [{ label: '全部节点', value: ALL_NODES_VALUE }, ...options]
+  }
+  return options
+})
 
 const selectedServer = ref(null)
 const selectedNode = ref('')
@@ -193,12 +238,31 @@ const selectedNode = ref('')
 const serversLoading = ref(false)
 const nodesLoading = ref(false)
 const storageLoading = ref(false)
-const isoLoading = ref(false)
+const contentLoading = ref(false)
+const uploading = ref(false)
 
 const storageList = ref([])
-const isoList = ref([])
-const isoDrawerVisible = ref(false)
+const contentList = ref([])
+const contentDrawerVisible = ref(false)
 const currentStorage = ref(null)
+const contentType = ref('iso')
+const contentTypeOptions = [
+  { label: 'ISO 镜像', value: 'iso' },
+  { label: '磁盘镜像', value: 'images' },
+  { label: '模板', value: 'vztmpl' },
+  { label: '备份', value: 'backup' },
+  { label: '全部', value: 'all' }
+]
+
+const drawerContentTypeOptions = computed(() => {
+  if (!currentStorage.value || !currentStorage.value.__contentList?.length) {
+    return contentTypeOptions
+  }
+  const supported = new Set(currentStorage.value.__contentList)
+  return contentTypeOptions.filter(
+    (item) => item.value === 'all' || supported.has(item.value)
+  )
+})
 
 const formatBytes = (bytes) => {
   if (bytes === null || bytes === undefined) return '-'
@@ -215,17 +279,25 @@ const formatTime = (timestamp) => {
   return date.isValid() ? date.format('YYYY-MM-DD HH:mm') : '-'
 }
 
-const columns = [
-  { title: '存储', dataIndex: 'storage', width: 160 },
-  { title: '类型', dataIndex: 'type', width: 120 },
-  { title: '内容类型', slotName: 'content', width: 260 },
-  { title: '共享', slotName: 'shared', width: 100 },
-  { title: '状态', slotName: 'enabled', width: 100 },
-  { title: '总容量', dataIndex: 'total', width: 140, render: ({ record }) => formatBytes(record.total) },
-  { title: '可用', dataIndex: 'avail', width: 140, render: ({ record }) => formatBytes(record.avail) },
-  { title: '使用情况', slotName: 'usage', width: 220 },
-  { title: '操作', slotName: 'actions', width: 120, fixed: 'right' }
-]
+const showNodeColumn = computed(() => selectedNode.value === ALL_NODES_VALUE)
+
+const columns = computed(() => {
+  const base = [
+    { title: '存储', dataIndex: 'storage', width: 160 },
+    { title: '类型', dataIndex: 'type', width: 120 },
+    { title: '内容类型', slotName: 'content', width: 260 },
+    { title: '共享', slotName: 'shared', width: 100 },
+    { title: '状态', slotName: 'enabled', width: 100 },
+    { title: '总容量', dataIndex: 'total', width: 140, render: ({ record }) => formatBytes(record.total) },
+    { title: '可用', dataIndex: 'avail', width: 140, render: ({ record }) => formatBytes(record.avail) },
+    { title: '使用情况', slotName: 'usage', width: 220 },
+    { title: '操作', slotName: 'actions', width: 120, fixed: 'right' }
+  ]
+  if (showNodeColumn.value) {
+    base.splice(1, 0, { title: '节点', dataIndex: '__node', width: 140 })
+  }
+  return base
+})
 
 const summary = computed(() => {
   const total = storageList.value.reduce((sum, item) => sum + (item.total || 0), 0)
@@ -257,6 +329,17 @@ const enhanceStorageRecord = (record) => {
     __usagePercent: usagePercent,
     __used: used
   }
+}
+
+const resolveDefaultContentType = (record) => {
+  const priority = ['iso', 'images', 'backup', 'vztmpl']
+  const supported = record?.__contentList || []
+  for (const type of priority) {
+    if (supported.includes(type)) {
+      return type
+    }
+  }
+  return 'all'
 }
 
 const loadServers = async () => {
@@ -291,8 +374,10 @@ const loadNodes = async () => {
       storageList.value = []
       return
     }
-    if (!selectedNode.value || !nodes.value.some(node => (node.node || node.name) === selectedNode.value)) {
-      selectedNode.value = nodes.value[0].node || nodes.value[0].name
+    const firstNode = nodes.value[0].node || nodes.value[0].name
+    const exists = nodes.value.some(node => (node.node || node.name) === selectedNode.value)
+    if (!selectedNode.value || (!exists && selectedNode.value !== ALL_NODES_VALUE)) {
+      selectedNode.value = firstNode
     }
   } catch (error) {
     Message.error('获取节点列表失败：' + (error.message || '未知错误'))
@@ -305,44 +390,109 @@ const loadNodes = async () => {
 }
 
 const loadStorages = async () => {
-  if (!selectedServer.value || !selectedNode.value) {
+  if (!selectedServer.value) {
+    storageList.value = []
+    return
+  }
+  const availableNodes = nodes.value
+    .map(node => node.node || node.name)
+    .filter(Boolean)
+  let targetNodes = []
+  if (selectedNode.value === ALL_NODES_VALUE) {
+    targetNodes = availableNodes
+  } else if (selectedNode.value) {
+    targetNodes = [selectedNode.value]
+  }
+  if (!targetNodes.length) {
     storageList.value = []
     return
   }
   storageLoading.value = true
+  const results = []
   try {
-    const res = await getNodeStorage(selectedServer.value, selectedNode.value)
-    const list = Array.isArray(res) ? res : []
-    storageList.value = list.map(enhanceStorageRecord)
-  } catch (error) {
-    storageList.value = []
-    Message.error('获取存储列表失败：' + (error.message || '未知错误'))
+    for (const nodeName of targetNodes) {
+      try {
+        const res = await getNodeStorage(selectedServer.value, nodeName)
+        const list = Array.isArray(res) ? res : []
+        list.forEach(item => {
+          results.push({
+            ...enhanceStorageRecord(item),
+            __node: nodeName
+          })
+        })
+      } catch (error) {
+        Message.error(`获取节点 ${nodeName} 存储失败：` + (error.message || '未知错误'))
+      }
+    }
+    storageList.value = results
   } finally {
     storageLoading.value = false
   }
 }
 
-const loadIsoList = async () => {
+const loadContentList = async () => {
   if (!selectedServer.value || !selectedNode.value || !currentStorage.value) {
-    isoList.value = []
+    contentList.value = []
     return
   }
-  isoLoading.value = true
+  contentLoading.value = true
   try {
-    const res = await getStorageISO(selectedServer.value, selectedNode.value, currentStorage.value.storage)
-    isoList.value = Array.isArray(res) ? res : res?.data || []
+    const params = {}
+    if (contentType.value && contentType.value !== 'all') {
+      params.content = contentType.value
+    }
+    const nodeName = currentStorage.value.__node || selectedNode.value
+    const res = await getStorageContent(
+      selectedServer.value,
+      nodeName,
+      currentStorage.value.storage,
+      params
+    )
+    contentList.value = Array.isArray(res) ? res : res?.data || []
   } catch (error) {
-    isoList.value = []
-    Message.error('获取 ISO 列表失败：' + (error.message || '未知错误'))
+    contentList.value = []
+    Message.error('获取存储内容失败：' + (error.message || '未知错误'))
   } finally {
-    isoLoading.value = false
+    contentLoading.value = false
   }
 }
 
-const openIsoDrawer = (record) => {
+const openContentDrawer = (record) => {
   currentStorage.value = record
-  isoDrawerVisible.value = true
-  loadIsoList()
+  contentType.value = resolveDefaultContentType(record)
+  contentDrawerVisible.value = true
+  loadContentList()
+}
+
+const handleUpload = async (options) => {
+  const { file, onSuccess, onError } = options
+  if (!selectedServer.value || !selectedNode.value || !currentStorage.value) {
+    onError?.(new Error('缺少目标存储信息'))
+    return
+  }
+  uploading.value = true
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('filename', file.name)
+  formData.append('content', 'iso')
+  try {
+    const nodeName = currentStorage.value.__node || selectedNode.value
+    await uploadStorageContent(
+      selectedServer.value,
+      nodeName,
+      currentStorage.value.storage,
+      formData
+    )
+    Message.success('上传成功')
+    onSuccess?.()
+    loadContentList()
+    loadStorages()
+  } catch (error) {
+    Message.error('上传失败：' + (error.message || '未知错误'))
+    onError?.(error)
+  } finally {
+    uploading.value = false
+  }
 }
 
 watch(selectedServer, (newVal, oldVal) => {
@@ -354,6 +504,20 @@ watch(selectedServer, (newVal, oldVal) => {
 watch(selectedNode, (newVal, oldVal) => {
   if (newVal !== oldVal) {
     loadStorages()
+  }
+})
+
+watch(contentType, (newVal, oldVal) => {
+  if (newVal !== oldVal && contentDrawerVisible.value) {
+    loadContentList()
+  }
+})
+
+watch(contentDrawerVisible, (visible) => {
+  if (!visible) {
+    contentList.value = []
+  } else if (visible && currentStorage.value) {
+    loadContentList()
   }
 })
 
@@ -428,6 +592,15 @@ onMounted(() => {
   margin-bottom: 12px;
   font-size: 13px;
   color: var(--color-text-2);
+}
+
+.drawer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 </style>
 
