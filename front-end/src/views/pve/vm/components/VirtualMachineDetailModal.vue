@@ -60,7 +60,7 @@
                   ref="novncContainer"
                   id="noVNC_container"
                   class="novnc-container"
-                  :style="{ display: consoleLoading || consoleError ? 'none' : 'block' }"
+                  :style="{ display: consoleLoading || consoleError ? 'none' : 'flex' }"
                 ></div>
               </div>
             </a-card>
@@ -508,7 +508,7 @@ const buildBackendUrl = (path) => {
 
 const initConsole = async () => {
   if (!currentVM.value) return
-  
+
   // 清理之前的连接
   if (rfb.value) {
     try {
@@ -518,17 +518,17 @@ const initConsole = async () => {
       console.warn('清理旧连接时出错:', e)
     }
   }
-  
+
   consoleLoading.value = true
   consoleError.value = ''
-  
+
   try {
     // 创建控制台会话
     const session = await createVMConsoleSession(currentVM.value.id, { type: 'novnc' })
     if (!session?.session_token) {
       throw new Error('未获取到控制台会话信息')
     }
-    
+
     // 优先使用 proxy_url（完整的 WebSocket URL），如果没有则使用 proxy_path 构建
     let wsUrl = ''
     if (session.proxy_url) {
@@ -543,26 +543,26 @@ const initConsole = async () => {
     } else {
       throw new Error('未获取到 WebSocket 代理路径')
     }
-    
+
     // 使用 password 字段作为 VNC 密码
     const password = session.password || ''
-    
+
     console.log('连接 noVNC:', {
       wsUrl,
       hasPassword: !!password,
       vmid: session.vmid,
       node: session.node
     })
-    
+
     // 等待 DOM 更新，确保 novncContainer 元素已经渲染
     await nextTick()
-    
+
     // 获取容器元素（优先使用 ref，如果不存在则通过 ID 获取）
     const container = novncContainer.value || document.getElementById('noVNC_container')
     if (!container) {
       throw new Error('找不到 noVNC 容器元素，请刷新页面重试')
     }
-    
+
     // 创建 noVNC 连接
     rfb.value = new RFB(container, wsUrl, {
       credentials: {
@@ -571,51 +571,61 @@ const initConsole = async () => {
       shared: true,
       repeaterID: ''
     })
-    
+
     // 配置 RFB
+    // scaleViewport: true 表示本地缩放，canvas 会缩放以适应容器
+    // resizeSession: false 表示不调整远程会话大小，只进行本地缩放
     rfb.value.scaleViewport = true
-    rfb.value.resizeSession = true
+    rfb.value.resizeSession = false
     rfb.value.background = '#000000'
     rfb.value.qualityLevel = 6
     rfb.value.compressionLevel = 2
-    
+
     // 事件监听
     rfb.value.addEventListener('connect', () => {
       consoleLoading.value = false
       consoleError.value = ''
       console.log('noVNC 连接成功')
+      // 连接成功后，延迟触发一次 resize 以确保正确布局和居中
+      setTimeout(() => {
+        if (rfb.value && container) {
+          // 触发容器 resize 事件，让 noVNC 重新计算布局
+          const resizeEvent = new Event('resize', { bubbles: true })
+          container.dispatchEvent(resizeEvent)
+        }
+      }, 200)
     })
-    
+
     rfb.value.addEventListener('disconnect', (e) => {
       consoleLoading.value = false
-      const reason = e?.detail?.clean === false && e?.detail?.reason 
-        ? e.detail.reason 
+      const reason = e?.detail?.clean === false && e?.detail?.reason
+        ? e.detail.reason
         : '连接已断开'
       consoleError.value = reason
       console.log('noVNC 断开连接:', reason, e?.detail)
     })
-    
+
     rfb.value.addEventListener('credentialsrequired', () => {
       consoleError.value = '需要密码验证，但密码可能不正确'
       consoleLoading.value = false
       console.warn('noVNC 需要密码验证')
     })
-    
+
     rfb.value.addEventListener('securityfailure', (e) => {
       const reason = e.detail?.reason || '未知错误'
       consoleError.value = '安全验证失败: ' + reason
       consoleLoading.value = false
       console.error('noVNC 安全验证失败:', e.detail)
     })
-    
+
     rfb.value.addEventListener('serverinit', () => {
       console.log('noVNC 服务器初始化完成')
     })
-    
+
     rfb.value.addEventListener('capabilities', (e) => {
       console.log('noVNC 服务器能力:', e.detail)
     })
-    
+
   } catch (error) {
     consoleError.value = error.message || '初始化控制台失败'
     consoleLoading.value = false
@@ -807,7 +817,8 @@ const bridgeOptions = computed(() => {
 
 const updateDetailWidth = () => {
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1200
-  detailModalWidth.value = Math.max(Math.min(viewportWidth - 80, 1200), 800)
+  // 增加控制台模态框的宽度，以便更好地显示 VNC 画面
+  detailModalWidth.value = Math.max(Math.min(viewportWidth - 80, 1600), 1000)
 }
 
 const loadDetail = async (options = {}) => {
@@ -1411,20 +1422,6 @@ watch(
   overflow: hidden;
 }
 
-.novnc-container {
-  width: 100%;
-  min-height: 480px;
-  height: 600px;
-  position: relative;
-  background: #000;
-}
-
-.novnc-container canvas {
-  width: 100% !important;
-  height: 100% !important;
-  display: block;
-}
-
 .novnc-placeholder {
   width: 100%;
   height: 100%;
@@ -1450,6 +1447,10 @@ watch(
   background: #000;
   overflow: hidden;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .novnc-container {
@@ -1458,11 +1459,31 @@ watch(
   background: #000;
   position: relative;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
 }
 
-.novnc-container canvas {
+/* noVNC 创建的 _screen div - 确保填满容器 */
+.novnc-container > div {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   width: 100% !important;
   height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+/* noVNC 创建的 canvas - 当 scaleViewport=true 时，noVNC 会自动处理缩放和居中 */
+.novnc-container canvas {
+  display: block !important;
+  /* 不强制宽高，让 noVNC 的 scaleViewport 自动处理 */
+  margin: 0 auto !important;
 }
 
 .pve-console-iframe {
@@ -1470,6 +1491,20 @@ watch(
   height: 480px;
   border: 0;
   background: #000;
+}
+
+/* 确保 a-card 内容区域也居中 */
+:deep(.arco-card-body) {
+  text-align: center;
+}
+
+/* 确保控制台卡片内的内容居中 */
+:deep(.arco-tabs-content) {
+  text-align: left;
+}
+
+:deep(.arco-tabs-content .arco-card-body) {
+  text-align: center;
 }
 </style>
 
