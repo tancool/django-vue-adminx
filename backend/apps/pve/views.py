@@ -253,6 +253,115 @@ class PVEServerViewSet(AuditOwnerPopulateMixin, ActionSerializerMixin, viewsets.
                 'detail': f'获取网络接口失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=False, methods=['get'], url_path='global-tasks')
+    def global_tasks(self, request):
+        """获取所有PVE服务器上的全局任务列表。"""
+        from .models import PVEServer
+        
+        server_id = request.query_params.get('server_id')
+        node = request.query_params.get('node')
+        statusfilter = request.query_params.get('statusfilter', 'all')
+        limit = int(request.query_params.get('limit', 100))
+        
+        all_tasks = []
+        
+        # 获取服务器列表
+        if server_id:
+            servers = PVEServer.objects.filter(id=server_id, is_active=True)
+        else:
+            servers = PVEServer.objects.filter(is_active=True)
+        
+        for server in servers:
+            try:
+                client = PVEAPIClient(
+                    host=server.host,
+                    port=server.port,
+                    token_id=server.token_id,
+                    token_secret=server.token_secret,
+                    verify_ssl=server.verify_ssl
+                )
+                
+                # 获取节点列表
+                nodes_data = client.get_nodes()
+                nodes_list = nodes_data if isinstance(nodes_data, list) else [nodes_data] if nodes_data else []
+                
+                for node_info in nodes_list:
+                    node_name = node_info.get('node') or node_info.get('name', '')
+                    if node and node != node_name:
+                        continue
+                    
+                    try:
+                        tasks = client.list_tasks(
+                            node_name,
+                            limit=limit,
+                            statusfilter=statusfilter if statusfilter != 'all' else None
+                        )
+                        
+                        for task in tasks:
+                            task['server_id'] = server.id
+                            task['server_name'] = server.name
+                            task['server_host'] = server.host
+                            task['node'] = node_name
+                            all_tasks.append(task)
+                    except Exception as e:
+                        logger.warning(f'获取节点 {node_name} 任务失败: {str(e)}')
+                        continue
+                        
+            except Exception as e:
+                logger.warning(f'获取服务器 {server.name} 任务失败: {str(e)}')
+                continue
+        
+        # 按开始时间倒序排序
+        all_tasks.sort(key=lambda x: x.get('starttime', 0) or 0, reverse=True)
+        
+        return Response({
+            'tasks': all_tasks[:limit],
+            'total': len(all_tasks)
+        })
+    
+    @action(detail=False, methods=['post'], url_path='task-log')
+    def global_task_log(self, request):
+        """获取全局任务日志。"""
+        server_id = request.data.get('server_id')
+        node = request.data.get('node')
+        upid = request.data.get('upid')
+        
+        if not server_id or not node or not upid:
+            return Response({
+                'detail': '缺少必要参数: server_id, node, upid'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import PVEServer
+            server = PVEServer.objects.get(id=server_id, is_active=True)
+            
+            client = PVEAPIClient(
+                host=server.host,
+                port=server.port,
+                token_id=server.token_id,
+                token_secret=server.token_secret,
+                verify_ssl=server.verify_ssl
+            )
+            
+            start = int(request.data.get('start', 0))
+            limit = int(request.data.get('limit', 200))
+            log_lines = client.get_task_log(node, upid, start=start, limit=limit)
+            
+            return Response({
+                'log': log_lines,
+                'start': start,
+                'total': len(log_lines)
+            })
+        except PVEServer.DoesNotExist:
+            return Response({
+                'detail': '服务器不存在或已禁用'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.exception('获取任务日志失败')
+            return Response({
+                'detail': f'获取任务日志失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
     @action(detail=True, methods=['get'], url_path='nodes/(?P<node>[^/.]+)/monitor')
     def node_monitor(self, request, pk=None, node=None):
         """获取节点监控数据（状态 + RRD 曲线）。"""

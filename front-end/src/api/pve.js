@@ -338,3 +338,29 @@ export function getVMTaskLog(id, data) {
   })
 }
 
+/**
+ * 全局任务中心相关API
+ */
+
+/**
+ * 获取全局任务列表
+ */
+export function getGlobalTasks(params) {
+  return request({
+    url: '/api/pve/servers/global-tasks/',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 获取全局任务日志
+ */
+export function getGlobalTaskLog(data) {
+  return request({
+    url: '/api/pve/servers/task-log/',
+    method: 'post',
+    data
+  })
+}
+
